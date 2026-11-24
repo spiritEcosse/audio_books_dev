@@ -7,7 +7,7 @@ use crate::claude;
 use crate::db::{Message, NewScene, Scene, Story};
 use crate::error::AppError;
 
-const SYSTEM_PROMPT: &str = "You are the editing assistant inside an audiobook video app. \
+const BASE_SYSTEM_PROMPT: &str = "You are the editing assistant inside an audiobook video app. \
 The user chats with you about one story. A story is split into scenes for an illustrated, \
 narrated video: each scene's \"text\" is a consecutive passage read aloud (about 20-60 seconds), \
 in the story's original order and wording unless the user asks to change it; \"image_prompt\" is \
@@ -22,6 +22,13 @@ itself, the COMPLETE new story text — the user must confirm it before it is sa
 You cannot touch files; the app applies \"scenes\" and, after confirmation, \"story_text\" for you. \
 The app may prepend <app_notes> to a user message to tell you what the user did outside the chat \
 (accepted or rejected a proposal, restored an older version); treat them as facts.";
+
+const STYLE_GUIDE: &str = include_str!("../prompts/fairy_tale_style.md");
+
+/// Base chat protocol plus the fairy-tale writing guide, sent as the system prompt every turn.
+fn system_prompt() -> String {
+    format!("{BASE_SYSTEM_PROMPT}\n\n{STYLE_GUIDE}")
+}
 
 #[derive(Deserialize)]
 struct Envelope {
@@ -120,15 +127,16 @@ pub fn run_turn(
     model: &str,
     user_text: &str,
 ) -> Result<Turn, AppError> {
+    let system = system_prompt();
     let reply = match session_id {
-        Some(id) => match claude::run(cwd, model, SYSTEM_PROMPT, user_text, Some(id)) {
+        Some(id) => match claude::run(cwd, model, &system, user_text, Some(id)) {
             Ok(reply) => reply,
             // Only a vanished session triggers the rebuild; other failures (network,
             // limits) are surfaced instead of silently paying for a full-context retry.
             Err(err) if claude::is_session_missing(&err) => claude::run(
                 cwd,
                 model,
-                SYSTEM_PROMPT,
+                &system,
                 &fresh_session_prompt(story, scenes, history, user_text),
                 None,
             )?,
@@ -137,7 +145,7 @@ pub fn run_turn(
         None => claude::run(
             cwd,
             model,
-            SYSTEM_PROMPT,
+            &system,
             &fresh_session_prompt(story, scenes, history, user_text),
             None,
         )?,
@@ -154,6 +162,13 @@ pub fn run_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_prompt_contains_protocol_and_style_guide() {
+        let prompt = system_prompt();
+        assert!(prompt.contains("\"story_text\""));
+        assert!(prompt.contains("WRITING GUIDE"));
+    }
 
     #[test]
     fn parses_reply_with_scenes() {
