@@ -13,36 +13,68 @@ narrated video: each scene's \"text\" is a consecutive passage read aloud (about
 in the story's original order and wording unless the user asks to change it; \"image_prompt\" is \
 a vivid English description of one still image for the scene. \
 Reply language: match the user's language. \
-ALWAYS reply with ONLY one JSON object, no code fences, no text around it: \
-{\"reply\": \"<your message to the user>\", \"scenes\": null} when scenes stay as they are, or \
-{\"reply\": \"<message>\", \"scenes\": [{\"text\": \"...\", \"image_prompt\": \"...\"}, ...]} \
-with the COMPLETE new list of scenes whenever you create or change any. \
-You cannot touch files; the app applies \"scenes\" for you.";
+ALWAYS reply with ONLY one JSON object, no code fences, no text around it, with these keys: \
+\"reply\" (your message to the user), \
+\"scenes\" (null when scenes stay as they are, otherwise the COMPLETE new list \
+[{\"text\": \"...\", \"image_prompt\": \"...\"}, ...] whenever you create or change any), \
+\"story_text\" (null normally; only when the user asks you to rewrite or edit the story text \
+itself, the COMPLETE new story text — the user must confirm it before it is saved). \
+You cannot touch files; the app applies \"scenes\" and, after confirmation, \"story_text\" for you. \
+The app may prepend <app_notes> to a user message to tell you what the user did outside the chat \
+(accepted or rejected a proposal, restored an older version); treat them as facts.";
 
 #[derive(Deserialize)]
 struct Envelope {
     reply: String,
     #[serde(default)]
     scenes: Option<Vec<NewScene>>,
+    #[serde(default)]
+    story_text: Option<String>,
 }
 
 pub struct Turn {
     pub reply: String,
     pub scenes: Option<Vec<NewScene>>,
+    pub story_text: Option<String>,
     pub session_id: Option<String>,
 }
 
 /// Parses the model's JSON envelope. Plain-text replies (the model ignored the format)
 /// are kept as a reply with no scene changes, and an empty scene list never wipes scenes.
-pub fn parse_envelope(text: &str) -> (String, Option<Vec<NewScene>>) {
+pub fn parse_envelope(text: &str) -> ParsedReply {
     let candidate = match (text.find('{'), text.rfind('}')) {
         (Some(start), Some(end)) if start < end => &text[start..=end],
-        _ => return (text.trim().to_owned(), None),
+        _ => return ParsedReply::plain(text),
     };
     match serde_json::from_str::<Envelope>(candidate) {
-        Ok(envelope) => (envelope.reply, envelope.scenes.filter(|scenes| !scenes.is_empty())),
-        Err(_) => (text.trim().to_owned(), None),
+        Ok(envelope) => ParsedReply {
+            reply: envelope.reply,
+            scenes: envelope.scenes.filter(|scenes| !scenes.is_empty()),
+            story_text: envelope.story_text.filter(|t| !t.trim().is_empty()),
+        },
+        Err(_) => ParsedReply::plain(text),
     }
+}
+
+pub struct ParsedReply {
+    pub reply: String,
+    pub scenes: Option<Vec<NewScene>>,
+    pub story_text: Option<String>,
+}
+
+impl ParsedReply {
+    fn plain(text: &str) -> Self {
+        Self { reply: text.trim().to_owned(), scenes: None, story_text: None }
+    }
+}
+
+/// Prefixes a user message with facts about what the user did outside the chat.
+pub fn with_notes(notes: &[String], text: &str) -> String {
+    if notes.is_empty() {
+        return text.to_owned();
+    }
+    let lines: Vec<String> = notes.iter().map(|n| format!("- {n}")).collect();
+    format!("<app_notes>\n{}\n</app_notes>\n{text}", lines.join("\n"))
 }
 
 fn state_block(story: &Story, scenes: &[Scene]) -> String {
@@ -110,8 +142,13 @@ pub fn run_turn(
             None,
         )?,
     };
-    let (text, new_scenes) = parse_envelope(&reply.text);
-    Ok(Turn { reply: text, scenes: new_scenes, session_id: reply.session_id })
+    let parsed = parse_envelope(&reply.text);
+    Ok(Turn {
+        reply: parsed.reply,
+        scenes: parsed.scenes,
+        story_text: parsed.story_text,
+        session_id: reply.session_id,
+    })
 }
 
 #[cfg(test)]
@@ -120,42 +157,57 @@ mod tests {
 
     #[test]
     fn parses_reply_with_scenes() {
-        let (reply, scenes) =
+        let parsed =
             parse_envelope(r#"{"reply":"Готово","scenes":[{"text":"A","image_prompt":"b"}]}"#);
-        assert_eq!(reply, "Готово");
-        assert_eq!(scenes.unwrap().len(), 1);
+        assert_eq!(parsed.reply, "Готово");
+        assert_eq!(parsed.scenes.unwrap().len(), 1);
     }
 
     #[test]
     fn parses_reply_with_null_scenes() {
-        let (reply, scenes) = parse_envelope(r#"{"reply":"Ок","scenes":null}"#);
-        assert_eq!(reply, "Ок");
-        assert!(scenes.is_none());
+        let parsed = parse_envelope(r#"{"reply":"Ок","scenes":null}"#);
+        assert_eq!(parsed.reply, "Ок");
+        assert!(parsed.scenes.is_none() && parsed.story_text.is_none());
     }
 
     #[test]
     fn tolerates_code_fence_around_json() {
-        let (reply, _) = parse_envelope("```json\n{\"reply\":\"Hi\",\"scenes\":null}\n```");
-        assert_eq!(reply, "Hi");
+        let parsed = parse_envelope("```json\n{\"reply\":\"Hi\",\"scenes\":null}\n```");
+        assert_eq!(parsed.reply, "Hi");
     }
 
     #[test]
     fn plain_text_becomes_reply_without_scene_changes() {
-        let (reply, scenes) = parse_envelope("Просто текст");
-        assert_eq!(reply, "Просто текст");
-        assert!(scenes.is_none());
+        let parsed = parse_envelope("Просто текст");
+        assert_eq!(parsed.reply, "Просто текст");
+        assert!(parsed.scenes.is_none());
     }
 
     #[test]
     fn empty_scene_list_never_wipes_scenes() {
-        let (_, scenes) = parse_envelope(r#"{"reply":"x","scenes":[]}"#);
-        assert!(scenes.is_none());
+        let parsed = parse_envelope(r#"{"reply":"x","scenes":[]}"#);
+        assert!(parsed.scenes.is_none());
+    }
+
+    #[test]
+    fn parses_proposed_story_text_and_ignores_blank_one() {
+        let with = parse_envelope(r#"{"reply":"r","scenes":null,"story_text":"New text"}"#);
+        assert_eq!(with.story_text.as_deref(), Some("New text"));
+        let blank = parse_envelope(r#"{"reply":"r","story_text":"  "}"#);
+        assert!(blank.story_text.is_none());
+    }
+
+    #[test]
+    fn notes_are_prefixed_only_when_present() {
+        assert_eq!(with_notes(&[], "hi"), "hi");
+        let text = with_notes(&["did X".into()], "hi");
+        assert!(text.starts_with("<app_notes>") && text.contains("- did X") && text.ends_with("hi"));
     }
 
     #[test]
     fn fresh_prompt_includes_story_history_and_message() {
         let story = Story { id: 1, title: "T".into(), text: "body".into() };
-        let history = [Message { id: 1, role: "user".into(), content: "earlier".into(), scenes_changed: false }];
+        let history = [Message { id: 1, role: "user".into(), content: "earlier".into(), scenes_changed: false, proposal: None }];
 
         let prompt = fresh_session_prompt(&story, &[], &history, "now");
 

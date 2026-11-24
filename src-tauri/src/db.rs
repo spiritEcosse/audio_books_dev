@@ -27,6 +27,24 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_messages_story ON messages(story_id, id);
+CREATE TABLE IF NOT EXISTS proposals (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    text       TEXT NOT NULL,
+    state      TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'accepted', 'rejected'))
+);
+CREATE TABLE IF NOT EXISTS revisions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    story_id   INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL CHECK (kind IN ('story_text', 'scenes')),
+    payload    TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_revisions_story ON revisions(story_id, id);
+CREATE TABLE IF NOT EXISTS pending_notes (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    story_id INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    text     TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -54,12 +72,36 @@ pub struct Scene {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct Proposal {
+    pub text: String,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct Message {
     pub id: i64,
     pub role: String,
     pub content: String,
     pub scenes_changed: bool,
+    pub proposal: Option<Proposal>,
 }
+
+#[derive(Debug, Clone)]
+pub struct Revision {
+    pub id: i64,
+    pub story_id: i64,
+    pub kind: String,
+    pub payload: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Note {
+    pub id: i64,
+    pub text: String,
+}
+
+const MAX_REVISIONS_LISTED: i64 = 100;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct NewScene {
@@ -170,22 +212,112 @@ pub fn add_message(
         role: role.to_string(),
         content: content.to_string(),
         scenes_changed,
+        proposal: None,
     })
 }
 
 pub fn list_messages(conn: &Connection, story_id: i64) -> Result<Vec<Message>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, role, content, scenes_changed FROM messages WHERE story_id = ?1 ORDER BY id",
+        "SELECT m.id, m.role, m.content, m.scenes_changed, p.text, p.state
+         FROM messages m LEFT JOIN proposals p ON p.message_id = m.id
+         WHERE m.story_id = ?1 ORDER BY m.id",
     )?;
     let rows = stmt.query_map([story_id], |row| {
+        let text: Option<String> = row.get(4)?;
+        let state: Option<String> = row.get(5)?;
         Ok(Message {
             id: row.get(0)?,
             role: row.get(1)?,
             content: row.get(2)?,
             scenes_changed: row.get(3)?,
+            proposal: text.zip(state).map(|(text, state)| Proposal { text, state }),
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn add_proposal(conn: &Connection, message_id: i64, text: &str) -> Result<(), AppError> {
+    conn.execute(
+        "INSERT INTO proposals (message_id, text) VALUES (?1, ?2)",
+        params![message_id, text],
+    )?;
+    Ok(())
+}
+
+/// Returns the story a proposal belongs to together with the proposal itself.
+pub fn get_proposal(conn: &Connection, message_id: i64) -> Result<(i64, Proposal), AppError> {
+    conn.query_row(
+        "SELECT m.story_id, p.text, p.state FROM proposals p
+         JOIN messages m ON m.id = p.message_id WHERE p.message_id = ?1",
+        [message_id],
+        |row| Ok((row.get(0)?, Proposal { text: row.get(1)?, state: row.get(2)? })),
+    )
+    .map_err(|_| AppError::new(format!("proposal for message {message_id} not found")))
+}
+
+pub fn set_proposal_state(conn: &Connection, message_id: i64, state: &str) -> Result<(), AppError> {
+    conn.execute("UPDATE proposals SET state = ?2 WHERE message_id = ?1", params![message_id, state])?;
+    Ok(())
+}
+
+pub fn update_story_text(conn: &Connection, story_id: i64, text: &str) -> Result<(), AppError> {
+    conn.execute("UPDATE stories SET text = ?2 WHERE id = ?1", params![story_id, text])?;
+    Ok(())
+}
+
+pub fn add_revision(conn: &Connection, story_id: i64, kind: &str, payload: &str) -> Result<(), AppError> {
+    conn.execute(
+        "INSERT INTO revisions (story_id, kind, payload) VALUES (?1, ?2, ?3)",
+        params![story_id, kind, payload],
+    )?;
+    Ok(())
+}
+
+fn revision_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Revision> {
+    Ok(Revision {
+        id: row.get(0)?,
+        story_id: row.get(1)?,
+        kind: row.get(2)?,
+        payload: row.get(3)?,
+        created_at: row.get(4)?,
+    })
+}
+
+/// Newest first.
+pub fn list_revisions(conn: &Connection, story_id: i64) -> Result<Vec<Revision>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, story_id, kind, payload, created_at FROM revisions
+         WHERE story_id = ?1 ORDER BY id DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![story_id, MAX_REVISIONS_LISTED], revision_from_row)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn get_revision(conn: &Connection, id: i64) -> Result<Revision, AppError> {
+    conn.query_row(
+        "SELECT id, story_id, kind, payload, created_at FROM revisions WHERE id = ?1",
+        [id],
+        revision_from_row,
+    )
+    .map_err(|_| AppError::new(format!("revision {id} not found")))
+}
+
+pub fn add_note(conn: &Connection, story_id: i64, text: &str) -> Result<(), AppError> {
+    conn.execute("INSERT INTO pending_notes (story_id, text) VALUES (?1, ?2)", params![story_id, text])?;
+    Ok(())
+}
+
+pub fn list_notes(conn: &Connection, story_id: i64) -> Result<Vec<Note>, AppError> {
+    let mut stmt = conn.prepare("SELECT id, text FROM pending_notes WHERE story_id = ?1 ORDER BY id")?;
+    let rows = stmt.query_map([story_id], |row| Ok(Note { id: row.get(0)?, text: row.get(1)? }))?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn delete_notes(conn: &Connection, ids: &[i64]) -> Result<(), AppError> {
+    for id in ids {
+        conn.execute("DELETE FROM pending_notes WHERE id = ?1", [id])?;
+    }
+    Ok(())
 }
 
 pub fn get_session(conn: &Connection, story_id: i64) -> Result<Option<String>, AppError> {

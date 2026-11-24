@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type ModelsInfo, type Story, type StoryDetail } from "./api";
 import { Chat } from "./Chat";
+import { Revisions } from "./Revisions";
 import { ModelPicker } from "./ModelPicker";
 import { SceneList } from "./SceneList";
 import { StoryForm } from "./StoryForm";
@@ -66,6 +67,9 @@ export default function App() {
       await reloadStories();
     });
 
+  const applyDetail = (action: () => Promise<StoryDetail>) =>
+    run(async () => setDetail(await action()));
+
   const send = (text: string) =>
     run(async () => {
       if (selectedId === null) return;
@@ -110,6 +114,16 @@ export default function App() {
           <div className="workspace">
             <div className="scenes-pane">
               <h1>{detail.story.title}</h1>
+              <details className="story-text">
+                <summary>Текст истории</summary>
+                <p>{detail.story.text}</p>
+              </details>
+              <Revisions
+                storyId={detail.story.id}
+                refreshKey={detail}
+                disabled={pendingText !== null}
+                onRestore={(id) => void applyDetail(() => api.restoreRevision(id))}
+              />
               <SceneList scenes={detail.scenes} />
             </div>
             <Chat
@@ -117,6 +131,8 @@ export default function App() {
               pendingText={pendingText}
               busy={pendingText !== null}
               onSend={send}
+              onAccept={(id) => void applyDetail(() => api.acceptProposal(id))}
+              onReject={(id) => void applyDetail(() => api.rejectProposal(id))}
             />
           </div>
         ) : (

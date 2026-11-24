@@ -6,9 +6,17 @@ interface Props {
   pendingText: string | null;
   busy: boolean;
   onSend: (text: string) => Promise<void>;
+  onAccept: (messageId: number) => void;
+  onReject: (messageId: number) => void;
 }
 
-export function Chat({ messages, pendingText, busy, onSend }: Props) {
+const PROPOSAL_LABEL = {
+  pending: "Claude предлагает новый текст истории",
+  accepted: "Текст истории сохранён",
+  rejected: "Предложение отклонено",
+} as const;
+
+export function Chat({ messages, pendingText, busy, onSend, onAccept, onReject }: Props) {
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -42,6 +50,25 @@ export function Chat({ messages, pendingText, busy, onSend }: Props) {
           <div key={m.id} className={`bubble ${m.role}`}>
             <p>{m.content}</p>
             {m.scenes_changed && <span className="badge">сцены обновлены</span>}
+            {m.proposal && (
+              <div className={`proposal ${m.proposal.state}`}>
+                <strong>{PROPOSAL_LABEL[m.proposal.state]}</strong>
+                <details>
+                  <summary>Показать текст</summary>
+                  <p>{m.proposal.text}</p>
+                </details>
+                {m.proposal.state === "pending" && (
+                  <div className="proposal-actions">
+                    <button disabled={busy} onClick={() => onAccept(m.id)}>
+                      Сохранить как текст истории
+                    </button>
+                    <button className="secondary" disabled={busy} onClick={() => onReject(m.id)}>
+                      Отклонить
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ))}
         {pendingText && (

@@ -1,3 +1,4 @@
+mod actions;
 mod chat;
 mod claude;
 mod db;
@@ -41,6 +42,26 @@ fn selected_model(conn: &Connection) -> Result<String, AppError> {
     Ok(db::get_setting(conn, MODEL_SETTING)?
         .filter(|id| claude::is_known_model(id))
         .unwrap_or_else(|| claude::DEFAULT_MODEL.to_owned()))
+}
+
+const REVISION_PREVIEW_CHARS: usize = 120;
+
+#[derive(serde::Serialize)]
+struct RevisionDto {
+    id: i64,
+    kind: String,
+    created_at: String,
+    summary: String,
+}
+
+fn revision_summary(revision: &db::Revision) -> String {
+    if revision.kind == actions::KIND_SCENES {
+        let count = serde_json::from_str::<Vec<serde_json::Value>>(&revision.payload)
+            .map(|scenes| scenes.len())
+            .unwrap_or(0);
+        return format!("{count} сцен");
+    }
+    revision.payload.chars().take(REVISION_PREVIEW_CHARS).collect()
 }
 
 #[derive(serde::Serialize)]
@@ -101,6 +122,40 @@ fn set_model(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     db::set_setting(&*state.conn()?, MODEL_SETTING, &id)
 }
 
+#[tauri::command]
+fn accept_proposal(state: State<'_, AppState>, message_id: i64) -> Result<StoryDetail, AppError> {
+    let conn = state.conn()?;
+    let story_id = actions::accept_proposal(&conn, message_id)?;
+    load_detail(&conn, story_id)
+}
+
+#[tauri::command]
+fn reject_proposal(state: State<'_, AppState>, message_id: i64) -> Result<StoryDetail, AppError> {
+    let conn = state.conn()?;
+    let story_id = actions::reject_proposal(&conn, message_id)?;
+    load_detail(&conn, story_id)
+}
+
+#[tauri::command]
+fn list_revisions(state: State<'_, AppState>, story_id: i64) -> Result<Vec<RevisionDto>, AppError> {
+    Ok(db::list_revisions(&*state.conn()?, story_id)?
+        .into_iter()
+        .map(|r| RevisionDto {
+            summary: revision_summary(&r),
+            id: r.id,
+            kind: r.kind,
+            created_at: r.created_at,
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn restore_revision(state: State<'_, AppState>, revision_id: i64) -> Result<StoryDetail, AppError> {
+    let mut conn = state.conn()?;
+    let story_id = actions::restore_revision(&mut conn, revision_id)?;
+    load_detail(&conn, story_id)
+}
+
 /// One chat turn: saves the user message, asks Claude (resuming its session), applies any
 /// scene changes and saves the answer. On failure the user message stays saved.
 #[tauri::command]
@@ -114,20 +169,25 @@ async fn send_message(
         return Err(AppError::new("message must not be empty"));
     }
 
-    let (story, scenes, history, session_id, model) = {
+    let (story, scenes, history, session_id, model, notes) = {
         let conn = state.conn()?;
         let story = db::get_story(&conn, id)?;
         let scenes = db::list_scenes(&conn, id)?;
         let history = db::list_messages(&conn, id)?;
         let session_id = db::get_session(&conn, id)?;
         let model = selected_model(&conn)?;
+        let notes = db::list_notes(&conn, id)?;
         db::add_message(&conn, id, "user", &text, false)?;
-        (story, scenes, history, session_id, model)
+        (story, scenes, history, session_id, model, notes)
     };
+
+    let note_ids: Vec<i64> = notes.iter().map(|n| n.id).collect();
+    let note_texts: Vec<String> = notes.into_iter().map(|n| n.text).collect();
+    let prompt_text = chat::with_notes(&note_texts, &text);
 
     let workspace = state.workspace.clone();
     let turn = tauri::async_runtime::spawn_blocking(move || {
-        chat::run_turn(&workspace, &story, &scenes, &history, session_id.as_deref(), &model, &text)
+        chat::run_turn(&workspace, &story, &scenes, &history, session_id.as_deref(), &model, &prompt_text)
     })
     .await
     .map_err(|e| AppError::new(format!("chat task failed: {e}")))??;
@@ -137,9 +197,13 @@ async fn send_message(
         db::set_session(&conn, id, session_id)?;
     }
     if let Some(new_scenes) = &turn.scenes {
-        db::replace_scenes(&mut conn, id, new_scenes)?;
+        actions::apply_scenes(&mut conn, id, new_scenes)?;
     }
-    db::add_message(&conn, id, "assistant", &turn.reply, turn.scenes.is_some())?;
+    let reply = db::add_message(&conn, id, "assistant", &turn.reply, turn.scenes.is_some())?;
+    if let Some(story_text) = &turn.story_text {
+        db::add_proposal(&conn, reply.id, story_text)?;
+    }
+    db::delete_notes(&conn, &note_ids)?;
     load_detail(&conn, id)
 }
 
@@ -166,7 +230,11 @@ pub fn run() {
             get_story,
             get_models,
             set_model,
-            send_message
+            send_message,
+            accept_proposal,
+            reject_proposal,
+            list_revisions,
+            restore_revision
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
