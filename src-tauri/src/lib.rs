@@ -1,17 +1,20 @@
 mod claude;
 mod db;
 mod error;
+mod pty;
 
 use std::sync::Mutex;
 
 use rusqlite::Connection;
-use tauri::{Manager, State};
+use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::{AppHandle, Manager, State};
 
 use db::{Scene, Story};
 use error::AppError;
 
 struct AppState {
     db: Mutex<Connection>,
+    workspace: std::path::PathBuf,
 }
 
 impl AppState {
@@ -68,6 +71,35 @@ async fn split_story(state: State<'_, AppState>, id: i64) -> Result<Vec<Scene>, 
     db::list_scenes(&conn, id)
 }
 
+#[tauri::command]
+fn pty_spawn(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    pty: State<'_, pty::PtyState>,
+    rows: u16,
+    cols: u16,
+    output: Channel<InvokeResponseBody>,
+) -> Result<(), AppError> {
+    pty.spawn(app, &state.workspace, rows, cols, output)
+}
+
+#[tauri::command]
+fn pty_write(pty: State<'_, pty::PtyState>, data: String) -> Result<(), AppError> {
+    pty.write(&data)
+}
+
+#[tauri::command]
+fn pty_resize(pty: State<'_, pty::PtyState>, rows: u16, cols: u16) -> Result<(), AppError> {
+    pty.resize(rows, cols)
+}
+
+#[tauri::command]
+fn pty_kill(pty: State<'_, pty::PtyState>) -> Result<(), AppError> {
+    pty.kill()
+}
+
+const WORKSPACE_GUIDE: &str = include_str!("../workspace_CLAUDE.md");
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Dev: finds .env in a parent of the cwd. Release: falls back to the app data dir.
@@ -80,9 +112,15 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)?;
             let _ = dotenvy::from_path(data_dir.join(".env"));
 
+            let guide = data_dir.join("CLAUDE.md");
+            if !guide.exists() {
+                std::fs::write(&guide, WORKSPACE_GUIDE)?;
+            }
+
             let conn = Connection::open(data_dir.join("audiobooks.db"))?;
             db::init(&conn)?;
-            app.manage(AppState { db: Mutex::new(conn) });
+            app.manage(AppState { db: Mutex::new(conn), workspace: data_dir });
+            app.manage(pty::PtyState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -90,7 +128,11 @@ pub fn run() {
             create_story,
             delete_story,
             get_story,
-            split_story
+            split_story,
+            pty_spawn,
+            pty_write,
+            pty_resize,
+            pty_kill
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -42,7 +42,11 @@ pub struct NewScene {
     pub image_prompt: String,
 }
 
+const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub fn init(conn: &Connection) -> Result<(), AppError> {
+    // The embedded Claude console may write to this file concurrently.
+    conn.busy_timeout(BUSY_TIMEOUT)?;
     conn.execute_batch(SCHEMA)?;
     Ok(())
 }
