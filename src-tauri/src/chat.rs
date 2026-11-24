@@ -76,8 +76,8 @@ fn fresh_session_prompt(story: &Story, scenes: &[Scene], history: &[Message], us
     prompt
 }
 
-/// Runs one chat turn. Continues the saved session when there is one; if that fails
-/// (session expired or removed), rebuilds the context from SQLite history in a new session.
+/// Runs one chat turn. Continues the saved session when there is one; if that session no
+/// longer exists, rebuilds the context from SQLite history in a new session.
 /// `history` must not include the new user message. Blocking.
 pub fn run_turn(
     cwd: &Path,
@@ -88,10 +88,18 @@ pub fn run_turn(
     user_text: &str,
 ) -> Result<Turn, AppError> {
     let reply = match session_id {
-        Some(id) => claude::run(cwd, SYSTEM_PROMPT, user_text, Some(id)).or_else(|err| {
-            eprintln!("resume failed ({err}); rebuilding context from history");
-            claude::run(cwd, SYSTEM_PROMPT, &fresh_session_prompt(story, scenes, history, user_text), None)
-        })?,
+        Some(id) => match claude::run(cwd, SYSTEM_PROMPT, user_text, Some(id)) {
+            Ok(reply) => reply,
+            // Only a vanished session triggers the rebuild; other failures (network,
+            // limits) are surfaced instead of silently paying for a full-context retry.
+            Err(err) if claude::is_session_missing(&err) => claude::run(
+                cwd,
+                SYSTEM_PROMPT,
+                &fresh_session_prompt(story, scenes, history, user_text),
+                None,
+            )?,
+            Err(err) => return Err(err),
+        },
         None => claude::run(cwd, SYSTEM_PROMPT, &fresh_session_prompt(story, scenes, history, user_text), None)?,
     };
     let (text, new_scenes) = parse_envelope(&reply.text);

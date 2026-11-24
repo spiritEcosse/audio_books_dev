@@ -81,10 +81,22 @@ pub fn run(
         .wait_with_output()
         .map_err(|e| AppError::new(format!("claude failed: {e}")))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::new(format!("claude exited with {}: {}", output.status, stderr.trim())));
+        // The CLI prints some failures (e.g. unknown session) to stdout, others to stderr.
+        let details = format!(
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        return Err(AppError::new(format!("claude exited with {}: {}", output.status, details.trim())));
     }
     parse_cli_output(&output.stdout)
+}
+
+const SESSION_MISSING_MARKER: &str = "No conversation found";
+
+/// True when a `--resume` failed only because the saved session no longer exists.
+pub fn is_session_missing(err: &AppError) -> bool {
+    err.to_string().contains(SESSION_MISSING_MARKER)
 }
 
 /// Pulls the reply text and session id out of `claude -p --output-format json` output.
@@ -119,6 +131,13 @@ mod tests {
     fn surfaces_cli_error_flag() {
         let out = br#"{"is_error":true,"result":"Not logged in"}"#;
         assert!(parse_cli_output(out).err().unwrap().to_string().contains("Not logged in"));
+    }
+
+    #[test]
+    fn detects_missing_session_error() {
+        let missing = AppError::new("claude exited with 1: No conversation found with session ID: x");
+        assert!(is_session_missing(&missing));
+        assert!(!is_session_missing(&AppError::new("claude exited with 1: network unreachable")));
     }
 
     #[test]
