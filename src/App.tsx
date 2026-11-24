@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Scene, type Story } from "./api";
-import { ClaudeConsole } from "./ClaudeConsole";
+import { api, type Story, type StoryDetail } from "./api";
+import { Chat } from "./Chat";
 import { SceneList } from "./SceneList";
 import { StoryForm } from "./StoryForm";
 import "./App.css";
-
-const SCENES_REFRESH_MS = 2000;
 
 function errorMessage(err: unknown): string {
   return typeof err === "string" ? err : String(err);
@@ -14,13 +12,9 @@ function errorMessage(err: unknown): string {
 export default function App() {
   const [stories, setStories] = useState<readonly Story[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [scenes, setScenes] = useState<readonly Scene[]>([]);
-  const [splitting, setSplitting] = useState(false);
+  const [detail, setDetail] = useState<StoryDetail | null>(null);
+  const [pendingText, setPendingText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [consoleOpen, setConsoleOpen] = useState(false);
-  const [consoleStarted, setConsoleStarted] = useState(false);
-
-  const selected = stories.find((s) => s.id === selectedId) ?? null;
 
   const run = useCallback(async (action: () => Promise<void>) => {
     setError(null);
@@ -31,44 +25,25 @@ export default function App() {
     }
   }, []);
 
-  const reload = useCallback(
+  const reloadStories = useCallback(
     () => run(async () => setStories(await api.listStories())),
     [run],
   );
 
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    void reloadStories();
+  }, [reloadStories]);
 
   useEffect(() => {
-    if (selectedId === null) {
-      setScenes([]);
-      return;
-    }
-    void run(async () => setScenes((await api.getStory(selectedId)).scenes));
+    setDetail(null);
+    if (selectedId === null) return;
+    void run(async () => setDetail(await api.getStory(selectedId)));
   }, [selectedId, run]);
-
-  // Claude in the console may edit the database directly, so re-read while it is open.
-  useEffect(() => {
-    if (!consoleOpen) return;
-    const timer = setInterval(() => {
-      void reload();
-      if (selectedId !== null) {
-        void api.getStory(selectedId).then((d) => setScenes(d.scenes)).catch(() => {});
-      }
-    }, SCENES_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [consoleOpen, selectedId, reload]);
-
-  const toggleConsole = () => {
-    setConsoleStarted(true);
-    setConsoleOpen((open) => !open);
-  };
 
   const create = (title: string, text: string) =>
     run(async () => {
       const story = await api.createStory(title, text);
-      await reload();
+      await reloadStories();
       setSelectedId(story.id);
     });
 
@@ -76,16 +51,21 @@ export default function App() {
     run(async () => {
       await api.deleteStory(id);
       if (selectedId === id) setSelectedId(null);
-      await reload();
+      await reloadStories();
     });
 
-  const split = (id: number) =>
+  const send = (text: string) =>
     run(async () => {
-      setSplitting(true);
+      if (selectedId === null) return;
+      setPendingText(text);
       try {
-        setScenes(await api.splitStory(id));
+        setDetail(await api.sendMessage(selectedId, text));
+      } catch (err) {
+        // The user message is saved even when Claude fails, so show what is stored.
+        setDetail(await api.getStory(selectedId));
+        throw err;
       } finally {
-        setSplitting(false);
+        setPendingText(null);
       }
     });
 
@@ -108,28 +88,20 @@ export default function App() {
         <StoryForm onCreate={create} />
       </aside>
       <main>
-        <div className="toolbar">
-          {consoleOpen && (
-            <span className="muted hint">
-              Результат попадает сюда, только если Claude запишет его в базу: просите «сохрани в базу».
-            </span>
-          )}
-          <button onClick={toggleConsole}>
-            {consoleOpen ? "Скрыть консоль Claude" : "Консоль Claude"}
-          </button>
-        </div>
-        {consoleStarted && <ClaudeConsole visible={consoleOpen} />}
         {error && <p className="error">{error}</p>}
-        {selected ? (
-          <>
-            <header>
-              <h1>{selected.title}</h1>
-              <button disabled={splitting} onClick={() => split(selected.id)}>
-                {splitting ? "Claude думает…" : "Разбить на сцены"}
-              </button>
-            </header>
-            <SceneList scenes={scenes} />
-          </>
+        {detail ? (
+          <div className="workspace">
+            <div className="scenes-pane">
+              <h1>{detail.story.title}</h1>
+              <SceneList scenes={detail.scenes} />
+            </div>
+            <Chat
+              messages={detail.messages}
+              pendingText={pendingText}
+              busy={pendingText !== null}
+              onSend={send}
+            />
+          </div>
         ) : (
           <p className="muted">Выберите или добавьте историю.</p>
         )}

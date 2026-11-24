@@ -2,7 +2,7 @@ import type { Scene } from "./api";
 
 export function SceneList({ scenes }: { scenes: readonly Scene[] }) {
   if (scenes.length === 0) {
-    return <p className="muted">Сцен пока нет. Нажмите «Разбить на сцены».</p>;
+    return <p className="muted">Сцен пока нет. Попросите Claude в чате разбить историю на сцены.</p>;
   }
   return (
     <ol className="scenes">

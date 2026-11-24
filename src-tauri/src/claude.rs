@@ -4,20 +4,13 @@ use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
-use crate::db::NewScene;
 use crate::error::AppError;
 
 const FALLBACK_SHELL: &str = "/bin/zsh";
 
-const SYSTEM_PROMPT: &str = "You split a story into scenes for an illustrated audiobook video. \
-Keep the original text intact and in order: each scene's \"text\" is a consecutive passage \
-meant to be narrated aloud (roughly 20-60 seconds). \"image_prompt\" is a vivid English \
-description of one still image for that scene. Reply with ONLY a JSON array of objects \
-with keys \"text\" and \"image_prompt\", no commentary.";
-
 /// Headless, tool-less and isolated from the user's global settings, hooks, plugins and MCP
 /// servers: without this a tiny request loads ~90k tokens of unrelated context.
-const HEADLESS_ARGS: [&str; 10] = [
+const HEADLESS_ARGS: [&str; 11] = [
     "-p",
     "--output-format",
     "json",
@@ -28,7 +21,13 @@ const HEADLESS_ARGS: [&str; 10] = [
     "--strict-mcp-config",
     "--mcp-config",
     r#"{"mcpServers":{}}"#,
+    "--disable-slash-commands",
 ];
+
+pub struct CliReply {
+    pub text: String,
+    pub session_id: Option<String>,
+}
 
 /// Finds the `claude` binary. A Finder-launched app has a minimal PATH, so ask a
 /// login shell, which sees the user's real one.
@@ -50,13 +49,20 @@ fn resolve_claude() -> Result<PathBuf, AppError> {
         .ok_or_else(|| AppError::new("`claude` not found. Install Claude Code or set CLAUDE_BIN"))
 }
 
-/// Splits a story with the Claude Code CLI in headless mode (`claude -p`),
-/// so it runs on the user's Claude login instead of an API key. Blocking.
-pub fn split_into_scenes(cwd: &Path, story_text: &str) -> Result<Vec<NewScene>, AppError> {
-    let mut child = Command::new(resolve_claude()?)
-        .args(HEADLESS_ARGS)
-        .arg("--disable-slash-commands")
-        .args(["--system-prompt", SYSTEM_PROMPT])
+/// Runs one headless Claude Code turn (`claude -p`), optionally continuing a saved session.
+/// The prompt goes through stdin. Blocking.
+pub fn run(
+    cwd: &Path,
+    system_prompt: &str,
+    prompt: &str,
+    resume: Option<&str>,
+) -> Result<CliReply, AppError> {
+    let mut command = Command::new(resolve_claude()?);
+    command.args(HEADLESS_ARGS).args(["--system-prompt", system_prompt]);
+    if let Some(session_id) = resume {
+        command.args(["--resume", session_id]);
+    }
+    let mut child = command
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -68,8 +74,8 @@ pub fn split_into_scenes(cwd: &Path, story_text: &str) -> Result<Vec<NewScene>, 
         .stdin
         .take()
         .ok_or_else(|| AppError::new("claude stdin unavailable"))?
-        .write_all(story_text.as_bytes())
-        .map_err(|e| AppError::new(format!("cannot send story to claude: {e}")))?;
+        .write_all(prompt.as_bytes())
+        .map_err(|e| AppError::new(format!("cannot send prompt to claude: {e}")))?;
 
     let output = child
         .wait_with_output()
@@ -78,36 +84,23 @@ pub fn split_into_scenes(cwd: &Path, story_text: &str) -> Result<Vec<NewScene>, 
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(AppError::new(format!("claude exited with {}: {}", output.status, stderr.trim())));
     }
-    parse_scenes(&extract_result(&output.stdout)?)
+    parse_cli_output(&output.stdout)
 }
 
-/// Pulls the model's reply out of `claude -p --output-format json` output.
-fn extract_result(stdout: &[u8]) -> Result<String, AppError> {
+/// Pulls the reply text and session id out of `claude -p --output-format json` output.
+pub fn parse_cli_output(stdout: &[u8]) -> Result<CliReply, AppError> {
     let payload: Value = serde_json::from_slice(stdout)
         .map_err(|e| AppError::new(format!("unexpected claude output: {e}")))?;
     if payload["is_error"].as_bool().unwrap_or(false) {
         let message = payload["result"].as_str().unwrap_or("unknown error");
         return Err(AppError::new(format!("claude error: {message}")));
     }
-    payload["result"]
+    let text = payload["result"]
         .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| AppError::new("claude output has no result"))
-}
-
-/// Extracts the JSON array from a model reply, tolerating code fences or stray prose.
-pub fn parse_scenes(reply: &str) -> Result<Vec<NewScene>, AppError> {
-    let start = reply.find('[');
-    let end = reply.rfind(']');
-    let (Some(start), Some(end)) = (start, end) else {
-        return Err(AppError::new("Claude reply contains no JSON array"));
-    };
-    let scenes: Vec<NewScene> = serde_json::from_str(&reply[start..=end])
-        .map_err(|err| AppError::new(format!("invalid scenes JSON: {err}")))?;
-    if scenes.is_empty() {
-        return Err(AppError::new("Claude returned zero scenes"));
-    }
-    Ok(scenes)
+        .ok_or_else(|| AppError::new("claude output has no result"))?
+        .to_owned();
+    let session_id = payload["session_id"].as_str().map(str::to_owned);
+    Ok(CliReply { text, session_id })
 }
 
 #[cfg(test)]
@@ -115,47 +108,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_plain_json_array() {
-        let scenes = parse_scenes(r#"[{"text":"Hi","image_prompt":"a cat"}]"#).unwrap();
-        assert_eq!(scenes.len(), 1);
-        assert_eq!(scenes[0].image_prompt, "a cat");
-    }
-
-    #[test]
-    fn parses_array_wrapped_in_code_fence() {
-        let reply = "```json\n[{\"text\":\"A\",\"image_prompt\":\"b\"}]\n```";
-        assert_eq!(parse_scenes(reply).unwrap().len(), 1);
-    }
-
-    #[test]
-    fn extracts_result_from_cli_json() {
-        let out = br#"{"type":"result","is_error":false,"result":"[]"}"#;
-        assert_eq!(extract_result(out).unwrap(), "[]");
+    fn extracts_text_and_session_id() {
+        let out = br#"{"is_error":false,"result":"hi","session_id":"abc"}"#;
+        let reply = parse_cli_output(out).unwrap();
+        assert_eq!(reply.text, "hi");
+        assert_eq!(reply.session_id.as_deref(), Some("abc"));
     }
 
     #[test]
     fn surfaces_cli_error_flag() {
         let out = br#"{"is_error":true,"result":"Not logged in"}"#;
-        assert!(extract_result(out).unwrap_err().to_string().contains("Not logged in"));
+        assert!(parse_cli_output(out).err().unwrap().to_string().contains("Not logged in"));
     }
 
     #[test]
     fn rejects_non_json_cli_output() {
-        assert!(extract_result(b"garbage").is_err());
-    }
-
-    #[test]
-    fn rejects_reply_without_array() {
-        assert!(parse_scenes("sorry, no").is_err());
-    }
-
-    #[test]
-    fn rejects_empty_array() {
-        assert!(parse_scenes("[]").is_err());
-    }
-
-    #[test]
-    fn rejects_malformed_scene_objects() {
-        assert!(parse_scenes(r#"[{"text":"only text"}]"#).is_err());
+        assert!(parse_cli_output(b"garbage").is_err());
     }
 }

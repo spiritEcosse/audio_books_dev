@@ -18,6 +18,19 @@ CREATE TABLE IF NOT EXISTS scenes (
     text         TEXT NOT NULL,
     image_prompt TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS messages (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    story_id      INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    role          TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content       TEXT NOT NULL,
+    scenes_changed INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_messages_story ON messages(story_id, id);
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    story_id   INTEGER PRIMARY KEY REFERENCES stories(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_scenes_story ON scenes(story_id, position);
 ";
 
@@ -36,7 +49,15 @@ pub struct Scene {
     pub image_prompt: String,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize)]
+pub struct Message {
+    pub id: i64,
+    pub role: String,
+    pub content: String,
+    pub scenes_changed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct NewScene {
     pub text: String,
     pub image_prompt: String,
@@ -129,6 +150,55 @@ pub fn replace_scenes(
     Ok(())
 }
 
+pub fn add_message(
+    conn: &Connection,
+    story_id: i64,
+    role: &str,
+    content: &str,
+    scenes_changed: bool,
+) -> Result<Message, AppError> {
+    conn.execute(
+        "INSERT INTO messages (story_id, role, content, scenes_changed) VALUES (?1, ?2, ?3, ?4)",
+        params![story_id, role, content, scenes_changed],
+    )?;
+    Ok(Message {
+        id: conn.last_insert_rowid(),
+        role: role.to_string(),
+        content: content.to_string(),
+        scenes_changed,
+    })
+}
+
+pub fn list_messages(conn: &Connection, story_id: i64) -> Result<Vec<Message>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, role, content, scenes_changed FROM messages WHERE story_id = ?1 ORDER BY id",
+    )?;
+    let rows = stmt.query_map([story_id], |row| {
+        Ok(Message {
+            id: row.get(0)?,
+            role: row.get(1)?,
+            content: row.get(2)?,
+            scenes_changed: row.get(3)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn get_session(conn: &Connection, story_id: i64) -> Result<Option<String>, AppError> {
+    let mut stmt = conn.prepare("SELECT session_id FROM chat_sessions WHERE story_id = ?1")?;
+    let mut rows = stmt.query([story_id])?;
+    Ok(rows.next()?.map(|row| row.get(0)).transpose()?)
+}
+
+pub fn set_session(conn: &Connection, story_id: i64, session_id: &str) -> Result<(), AppError> {
+    conn.execute(
+        "INSERT INTO chat_sessions (story_id, session_id) VALUES (?1, ?2)
+         ON CONFLICT(story_id) DO UPDATE SET session_id = excluded.session_id",
+        params![story_id, session_id],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,5 +254,32 @@ mod tests {
     fn get_story_errors_when_missing() {
         let conn = memory_db();
         assert!(get_story(&conn, 42).is_err());
+    }
+
+    #[test]
+    fn messages_keep_order_and_cascade_on_story_delete() {
+        let conn = memory_db();
+        let story = create_story(&conn, "A", "t").unwrap();
+        add_message(&conn, story.id, "user", "hi", false).unwrap();
+        add_message(&conn, story.id, "assistant", "hello", true).unwrap();
+
+        let messages = list_messages(&conn, story.id).unwrap();
+        assert_eq!(messages.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(), ["hi", "hello"]);
+        assert!(messages[1].scenes_changed);
+
+        delete_story(&conn, story.id).unwrap();
+        assert!(list_messages(&conn, story.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn session_is_upserted_per_story() {
+        let conn = memory_db();
+        let story = create_story(&conn, "A", "t").unwrap();
+        assert_eq!(get_session(&conn, story.id).unwrap(), None);
+
+        set_session(&conn, story.id, "s1").unwrap();
+        set_session(&conn, story.id, "s2").unwrap();
+
+        assert_eq!(get_session(&conn, story.id).unwrap().as_deref(), Some("s2"));
     }
 }

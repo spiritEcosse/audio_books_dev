@@ -1,24 +1,24 @@
+mod chat;
 mod claude;
 mod db;
 mod error;
-mod pty;
 
-use std::sync::Mutex;
+use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::Connection;
-use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::{AppHandle, Manager, State};
+use tauri::{Manager, State};
 
-use db::{Scene, Story};
+use db::{Message, Scene, Story};
 use error::AppError;
 
 struct AppState {
     db: Mutex<Connection>,
-    workspace: std::path::PathBuf,
+    workspace: PathBuf,
 }
 
 impl AppState {
-    fn conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, AppError> {
+    fn conn(&self) -> Result<MutexGuard<'_, Connection>, AppError> {
         self.db.lock().map_err(|_| AppError::new("database lock poisoned"))
     }
 }
@@ -27,6 +27,15 @@ impl AppState {
 struct StoryDetail {
     story: Story,
     scenes: Vec<Scene>,
+    messages: Vec<Message>,
+}
+
+fn load_detail(conn: &Connection, id: i64) -> Result<StoryDetail, AppError> {
+    Ok(StoryDetail {
+        story: db::get_story(conn, id)?,
+        scenes: db::list_scenes(conn, id)?,
+        messages: db::list_messages(conn, id)?,
+    })
 }
 
 #[tauri::command]
@@ -50,58 +59,49 @@ fn delete_story(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
 
 #[tauri::command]
 fn get_story(state: State<'_, AppState>, id: i64) -> Result<StoryDetail, AppError> {
-    let conn = state.conn()?;
-    let conn = &*conn;
-    Ok(StoryDetail {
-        story: db::get_story(conn, id)?,
-        scenes: db::list_scenes(conn, id)?,
-    })
+    load_detail(&*state.conn()?, id)
 }
 
+/// One chat turn: saves the user message, asks Claude (resuming its session), applies any
+/// scene changes and saves the answer. On failure the user message stays saved.
 #[tauri::command]
-async fn split_story(state: State<'_, AppState>, id: i64) -> Result<Vec<Scene>, AppError> {
-    let story = db::get_story(&*state.conn()?, id)?;
-    let workspace = state.workspace.clone();
+async fn send_message(
+    state: State<'_, AppState>,
+    id: i64,
+    text: String,
+) -> Result<StoryDetail, AppError> {
+    let text = text.trim().to_owned();
+    if text.is_empty() {
+        return Err(AppError::new("message must not be empty"));
+    }
 
-    let new_scenes = tauri::async_runtime::spawn_blocking(move || {
-        claude::split_into_scenes(&workspace, &story.text)
+    let (story, scenes, history, session_id) = {
+        let conn = state.conn()?;
+        let story = db::get_story(&conn, id)?;
+        let scenes = db::list_scenes(&conn, id)?;
+        let history = db::list_messages(&conn, id)?;
+        let session_id = db::get_session(&conn, id)?;
+        db::add_message(&conn, id, "user", &text, false)?;
+        (story, scenes, history, session_id)
+    };
+
+    let workspace = state.workspace.clone();
+    let turn = tauri::async_runtime::spawn_blocking(move || {
+        chat::run_turn(&workspace, &story, &scenes, &history, session_id.as_deref(), &text)
     })
     .await
-    .map_err(|e| AppError::new(format!("split task failed: {e}")))??;
+    .map_err(|e| AppError::new(format!("chat task failed: {e}")))??;
 
     let mut conn = state.conn()?;
-    db::replace_scenes(&mut conn, id, &new_scenes)?;
-    db::list_scenes(&conn, id)
+    if let Some(session_id) = &turn.session_id {
+        db::set_session(&conn, id, session_id)?;
+    }
+    if let Some(new_scenes) = &turn.scenes {
+        db::replace_scenes(&mut conn, id, new_scenes)?;
+    }
+    db::add_message(&conn, id, "assistant", &turn.reply, turn.scenes.is_some())?;
+    load_detail(&conn, id)
 }
-
-#[tauri::command]
-fn pty_spawn(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    pty: State<'_, pty::PtyState>,
-    rows: u16,
-    cols: u16,
-    output: Channel<InvokeResponseBody>,
-) -> Result<(), AppError> {
-    pty.spawn(app, &state.workspace, rows, cols, output)
-}
-
-#[tauri::command]
-fn pty_write(pty: State<'_, pty::PtyState>, data: String) -> Result<(), AppError> {
-    pty.write(&data)
-}
-
-#[tauri::command]
-fn pty_resize(pty: State<'_, pty::PtyState>, rows: u16, cols: u16) -> Result<(), AppError> {
-    pty.resize(rows, cols)
-}
-
-#[tauri::command]
-fn pty_kill(pty: State<'_, pty::PtyState>) -> Result<(), AppError> {
-    pty.kill()
-}
-
-const WORKSPACE_GUIDE: &str = include_str!("../workspace_CLAUDE.md");
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -110,15 +110,13 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-
-            let guide = data_dir.join("CLAUDE.md");
-            // App-managed file: always refreshed so guidance updates ship with the app.
-            std::fs::write(&guide, WORKSPACE_GUIDE)?;
+            // Older builds wrote a CLAUDE.md here for the embedded console; it would now
+            // contradict the chat protocol.
+            let _ = std::fs::remove_file(data_dir.join("CLAUDE.md"));
 
             let conn = Connection::open(data_dir.join("audiobooks.db"))?;
             db::init(&conn)?;
             app.manage(AppState { db: Mutex::new(conn), workspace: data_dir });
-            app.manage(pty::PtyState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -126,11 +124,7 @@ pub fn run() {
             create_story,
             delete_story,
             get_story,
-            split_story,
-            pty_spawn,
-            pty_write,
-            pty_resize,
-            pty_kill
+            send_message
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

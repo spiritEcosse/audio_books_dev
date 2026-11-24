@@ -13,9 +13,17 @@ export interface Scene {
   image_prompt: string;
 }
 
+export interface Message {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  scenes_changed: boolean;
+}
+
 export interface StoryDetail {
   story: Story;
   scenes: Scene[];
+  messages: Message[];
 }
 
 export const api = {
@@ -24,5 +32,6 @@ export const api = {
     invoke<Story>("create_story", { title, text }),
   deleteStory: (id: number) => invoke<void>("delete_story", { id }),
   getStory: (id: number) => invoke<StoryDetail>("get_story", { id }),
-  splitStory: (id: number) => invoke<Scene[]>("split_story", { id }),
+  sendMessage: (id: number, text: string) =>
+    invoke<StoryDetail>("send_message", { id, text }),
 };
