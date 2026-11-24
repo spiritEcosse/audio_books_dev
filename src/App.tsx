@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type ModelsInfo, type Story, type StoryDetail } from "./api";
 import { Chat } from "./Chat";
+import { ModelPicker } from "./ModelPicker";
 import { SceneList } from "./SceneList";
 import { StoryForm } from "./StoryForm";
 import "./App.css";
@@ -83,6 +84,11 @@ export default function App() {
   return (
     <div className="layout">
       <aside>
+        <ModelPicker
+          models={models}
+          disabled={pendingText !== null}
+          onChange={(id) => void changeModel(id)}
+        />
         <h2>Истории</h2>
         <ul className="stories">
           {stories.map((story) => (
@@ -110,8 +116,6 @@ export default function App() {
               messages={detail.messages}
               pendingText={pendingText}
               busy={pendingText !== null}
-              models={models}
-              onModelChange={(id) => void changeModel(id)}
               onSend={send}
             />
           </div>

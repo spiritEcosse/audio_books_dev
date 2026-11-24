@@ -1,16 +1,14 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { Message, ModelsInfo } from "./api";
+import type { Message } from "./api";
 
 interface Props {
   messages: readonly Message[];
   pendingText: string | null;
   busy: boolean;
-  models: ModelsInfo | null;
-  onModelChange: (id: string) => void;
   onSend: (text: string) => Promise<void>;
 }
 
-export function Chat({ messages, pendingText, busy, models, onModelChange, onSend }: Props) {
+export function Chat({ messages, pendingText, busy, onSend }: Props) {
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -34,24 +32,6 @@ export function Chat({ messages, pendingText, busy, models, onModelChange, onSen
 
   return (
     <section className="chat">
-      {models && (
-        <div className="chat-header">
-          <label>
-            Модель{" "}
-            <select
-              value={models.selected}
-              disabled={busy}
-              onChange={(e) => onModelChange(e.target.value)}
-            >
-              {models.options.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      )}
       <div className="chat-log">
         {messages.length === 0 && !pendingText && (
           <p className="muted">
