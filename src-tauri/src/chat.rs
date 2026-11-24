@@ -85,22 +85,30 @@ pub fn run_turn(
     scenes: &[Scene],
     history: &[Message],
     session_id: Option<&str>,
+    model: &str,
     user_text: &str,
 ) -> Result<Turn, AppError> {
     let reply = match session_id {
-        Some(id) => match claude::run(cwd, SYSTEM_PROMPT, user_text, Some(id)) {
+        Some(id) => match claude::run(cwd, model, SYSTEM_PROMPT, user_text, Some(id)) {
             Ok(reply) => reply,
             // Only a vanished session triggers the rebuild; other failures (network,
             // limits) are surfaced instead of silently paying for a full-context retry.
             Err(err) if claude::is_session_missing(&err) => claude::run(
                 cwd,
+                model,
                 SYSTEM_PROMPT,
                 &fresh_session_prompt(story, scenes, history, user_text),
                 None,
             )?,
             Err(err) => return Err(err),
         },
-        None => claude::run(cwd, SYSTEM_PROMPT, &fresh_session_prompt(story, scenes, history, user_text), None)?,
+        None => claude::run(
+            cwd,
+            model,
+            SYSTEM_PROMPT,
+            &fresh_session_prompt(story, scenes, history, user_text),
+            None,
+        )?,
     };
     let (text, new_scenes) = parse_envelope(&reply.text);
     Ok(Turn { reply: text, scenes: new_scenes, session_id: reply.session_id })

@@ -24,6 +24,24 @@ const HEADLESS_ARGS: [&str; 11] = [
     "--disable-slash-commands",
 ];
 
+pub struct ModelOption {
+    pub id: &'static str,
+    pub label: &'static str,
+}
+
+/// Models the user can pick. Only these ids ever reach the CLI's `--model` flag.
+pub const MODELS: [ModelOption; 3] = [
+    ModelOption { id: "claude-sonnet-5-5", label: "Sonnet 5.5 (баланс)" },
+    ModelOption { id: "claude-opus-5-5", label: "Opus 5.5 (самая сильная)" },
+    ModelOption { id: "claude-haiku-5-5", label: "Haiku 5.5 (быстрая и дешёвая)" },
+];
+
+pub const DEFAULT_MODEL: &str = MODELS[0].id;
+
+pub fn is_known_model(id: &str) -> bool {
+    MODELS.iter().any(|m| m.id == id)
+}
+
 pub struct CliReply {
     pub text: String,
     pub session_id: Option<String>,
@@ -53,12 +71,15 @@ fn resolve_claude() -> Result<PathBuf, AppError> {
 /// The prompt goes through stdin. Blocking.
 pub fn run(
     cwd: &Path,
+    model: &str,
     system_prompt: &str,
     prompt: &str,
     resume: Option<&str>,
 ) -> Result<CliReply, AppError> {
     let mut command = Command::new(resolve_claude()?);
-    command.args(HEADLESS_ARGS).args(["--system-prompt", system_prompt]);
+    command
+        .args(HEADLESS_ARGS)
+        .args(["--model", model, "--system-prompt", system_prompt]);
     if let Some(session_id) = resume {
         command.args(["--resume", session_id]);
     }
@@ -131,6 +152,12 @@ mod tests {
     fn surfaces_cli_error_flag() {
         let out = br#"{"is_error":true,"result":"Not logged in"}"#;
         assert!(parse_cli_output(out).err().unwrap().to_string().contains("Not logged in"));
+    }
+
+    #[test]
+    fn only_listed_models_are_known() {
+        assert!(is_known_model(DEFAULT_MODEL));
+        assert!(!is_known_model("--dangerous-flag"));
     }
 
     #[test]

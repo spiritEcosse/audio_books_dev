@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_messages_story ON messages(story_id, id);
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS chat_sessions (
     story_id   INTEGER PRIMARY KEY REFERENCES stories(id) ON DELETE CASCADE,
     session_id TEXT NOT NULL
@@ -199,6 +203,21 @@ pub fn set_session(conn: &Connection, story_id: i64, session_id: &str) -> Result
     Ok(())
 }
 
+pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>, AppError> {
+    let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
+    let mut rows = stmt.query([key])?;
+    Ok(rows.next()?.map(|row| row.get(0)).transpose()?)
+}
+
+pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<(), AppError> {
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,5 +300,16 @@ mod tests {
         set_session(&conn, story.id, "s2").unwrap();
 
         assert_eq!(get_session(&conn, story.id).unwrap().as_deref(), Some("s2"));
+    }
+
+    #[test]
+    fn settings_are_upserted() {
+        let conn = memory_db();
+        assert_eq!(get_setting(&conn, "model").unwrap(), None);
+
+        set_setting(&conn, "model", "a").unwrap();
+        set_setting(&conn, "model", "b").unwrap();
+
+        assert_eq!(get_setting(&conn, "model").unwrap().as_deref(), Some("b"));
     }
 }

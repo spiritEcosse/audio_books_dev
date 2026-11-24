@@ -23,6 +23,26 @@ impl AppState {
     }
 }
 
+const MODEL_SETTING: &str = "model";
+
+#[derive(serde::Serialize)]
+struct ModelsInfo {
+    options: Vec<ModelOptionDto>,
+    selected: String,
+}
+
+#[derive(serde::Serialize)]
+struct ModelOptionDto {
+    id: &'static str,
+    label: &'static str,
+}
+
+fn selected_model(conn: &Connection) -> Result<String, AppError> {
+    Ok(db::get_setting(conn, MODEL_SETTING)?
+        .filter(|id| claude::is_known_model(id))
+        .unwrap_or_else(|| claude::DEFAULT_MODEL.to_owned()))
+}
+
 #[derive(serde::Serialize)]
 struct StoryDetail {
     story: Story,
@@ -62,6 +82,25 @@ fn get_story(state: State<'_, AppState>, id: i64) -> Result<StoryDetail, AppErro
     load_detail(&*state.conn()?, id)
 }
 
+#[tauri::command]
+fn get_models(state: State<'_, AppState>) -> Result<ModelsInfo, AppError> {
+    Ok(ModelsInfo {
+        options: claude::MODELS
+            .iter()
+            .map(|m| ModelOptionDto { id: m.id, label: m.label })
+            .collect(),
+        selected: selected_model(&*state.conn()?)?,
+    })
+}
+
+#[tauri::command]
+fn set_model(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+    if !claude::is_known_model(&id) {
+        return Err(AppError::new(format!("unknown model: {id}")));
+    }
+    db::set_setting(&*state.conn()?, MODEL_SETTING, &id)
+}
+
 /// One chat turn: saves the user message, asks Claude (resuming its session), applies any
 /// scene changes and saves the answer. On failure the user message stays saved.
 #[tauri::command]
@@ -75,19 +114,20 @@ async fn send_message(
         return Err(AppError::new("message must not be empty"));
     }
 
-    let (story, scenes, history, session_id) = {
+    let (story, scenes, history, session_id, model) = {
         let conn = state.conn()?;
         let story = db::get_story(&conn, id)?;
         let scenes = db::list_scenes(&conn, id)?;
         let history = db::list_messages(&conn, id)?;
         let session_id = db::get_session(&conn, id)?;
+        let model = selected_model(&conn)?;
         db::add_message(&conn, id, "user", &text, false)?;
-        (story, scenes, history, session_id)
+        (story, scenes, history, session_id, model)
     };
 
     let workspace = state.workspace.clone();
     let turn = tauri::async_runtime::spawn_blocking(move || {
-        chat::run_turn(&workspace, &story, &scenes, &history, session_id.as_deref(), &text)
+        chat::run_turn(&workspace, &story, &scenes, &history, session_id.as_deref(), &model, &text)
     })
     .await
     .map_err(|e| AppError::new(format!("chat task failed: {e}")))??;
@@ -124,6 +164,8 @@ pub fn run() {
             create_story,
             delete_story,
             get_story,
+            get_models,
+            set_model,
             send_message
         ])
         .run(tauri::generate_context!())

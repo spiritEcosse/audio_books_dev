@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Story, type StoryDetail } from "./api";
+import { api, type ModelsInfo, type Story, type StoryDetail } from "./api";
 import { Chat } from "./Chat";
 import { SceneList } from "./SceneList";
 import { StoryForm } from "./StoryForm";
@@ -14,6 +14,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<StoryDetail | null>(null);
   const [pendingText, setPendingText] = useState<string | null>(null);
+  const [models, setModels] = useState<ModelsInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const run = useCallback(async (action: () => Promise<void>) => {
@@ -33,6 +34,16 @@ export default function App() {
   useEffect(() => {
     void reloadStories();
   }, [reloadStories]);
+
+  useEffect(() => {
+    void run(async () => setModels(await api.getModels()));
+  }, [run]);
+
+  const changeModel = (id: string) =>
+    run(async () => {
+      await api.setModel(id);
+      setModels((current) => (current ? { ...current, selected: id } : current));
+    });
 
   useEffect(() => {
     setDetail(null);
@@ -99,6 +110,8 @@ export default function App() {
               messages={detail.messages}
               pendingText={pendingText}
               busy={pendingText !== null}
+              models={models}
+              onModelChange={(id) => void changeModel(id)}
               onSend={send}
             />
           </div>
