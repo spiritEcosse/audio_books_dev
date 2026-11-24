@@ -60,11 +60,14 @@ fn get_story(state: State<'_, AppState>, id: i64) -> Result<StoryDetail, AppErro
 
 #[tauri::command]
 async fn split_story(state: State<'_, AppState>, id: i64) -> Result<Vec<Scene>, AppError> {
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .map_err(|_| AppError::new("ANTHROPIC_API_KEY is not set (add it to .env)"))?;
     let story = db::get_story(&*state.conn()?, id)?;
+    let workspace = state.workspace.clone();
 
-    let new_scenes = claude::split_into_scenes(&api_key, &story.text).await?;
+    let new_scenes = tauri::async_runtime::spawn_blocking(move || {
+        claude::split_into_scenes(&workspace, &story.text)
+    })
+    .await
+    .map_err(|e| AppError::new(format!("split task failed: {e}")))??;
 
     let mut conn = state.conn()?;
     db::replace_scenes(&mut conn, id, &new_scenes)?;
@@ -102,20 +105,15 @@ const WORKSPACE_GUIDE: &str = include_str!("../workspace_CLAUDE.md");
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Dev: finds .env in a parent of the cwd. Release: falls back to the app data dir.
-    let _ = dotenvy::dotenv();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            let _ = dotenvy::from_path(data_dir.join(".env"));
 
             let guide = data_dir.join("CLAUDE.md");
-            if !guide.exists() {
-                std::fs::write(&guide, WORKSPACE_GUIDE)?;
-            }
+            // App-managed file: always refreshed so guidance updates ship with the app.
+            std::fs::write(&guide, WORKSPACE_GUIDE)?;
 
             let conn = Connection::open(data_dir.join("audiobooks.db"))?;
             db::init(&conn)?;

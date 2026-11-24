@@ -1,12 +1,13 @@
-use serde_json::{Value, json};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use serde_json::Value;
 
 use crate::db::NewScene;
 use crate::error::AppError;
 
-const API_URL: &str = "https://api.anthropic.com/v1/messages";
-const API_VERSION: &str = "2023-06-01";
-const MODEL: &str = "claude-sonnet-5-5";
-const MAX_TOKENS: u32 = 8192;
+const FALLBACK_SHELL: &str = "/bin/zsh";
 
 const SYSTEM_PROMPT: &str = "You split a story into scenes for an illustrated audiobook video. \
 Keep the original text intact and in order: each scene's \"text\" is a consecutive passage \
@@ -14,33 +15,84 @@ meant to be narrated aloud (roughly 20-60 seconds). \"image_prompt\" is a vivid 
 description of one still image for that scene. Reply with ONLY a JSON array of objects \
 with keys \"text\" and \"image_prompt\", no commentary.";
 
-pub async fn split_into_scenes(api_key: &str, story_text: &str) -> Result<Vec<NewScene>, AppError> {
-    let body = json!({
-        "model": MODEL,
-        "max_tokens": MAX_TOKENS,
-        "system": SYSTEM_PROMPT,
-        "messages": [{ "role": "user", "content": story_text }],
-    });
+/// Headless, tool-less and isolated from the user's global settings, hooks, plugins and MCP
+/// servers: without this a tiny request loads ~90k tokens of unrelated context.
+const HEADLESS_ARGS: [&str; 10] = [
+    "-p",
+    "--output-format",
+    "json",
+    "--tools",
+    "",
+    "--setting-sources",
+    "",
+    "--strict-mcp-config",
+    "--mcp-config",
+    r#"{"mcpServers":{}}"#,
+];
 
-    let response = reqwest::Client::new()
-        .post(API_URL)
-        .header("x-api-key", api_key)
-        .header("anthropic-version", API_VERSION)
-        .json(&body)
-        .send()
-        .await?;
-
-    let status = response.status();
-    let payload: Value = response.json().await?;
-    if !status.is_success() {
-        let message = payload["error"]["message"].as_str().unwrap_or("unknown error");
-        return Err(AppError::new(format!("Claude API {status}: {message}")));
+/// Finds the `claude` binary. A Finder-launched app has a minimal PATH, so ask a
+/// login shell, which sees the user's real one.
+fn resolve_claude() -> Result<PathBuf, AppError> {
+    if let Ok(path) = std::env::var("CLAUDE_BIN") {
+        return Ok(PathBuf::from(path));
     }
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| FALLBACK_SHELL.into());
+    let output = Command::new(shell)
+        .args(["-l", "-i", "-c", "command -v claude"])
+        .output()
+        .map_err(|e| AppError::new(format!("cannot run login shell: {e}")))?;
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .rev()
+        .find(|line| line.starts_with('/'))
+        .map(PathBuf::from)
+        .ok_or_else(|| AppError::new("`claude` not found. Install Claude Code or set CLAUDE_BIN"))
+}
 
-    let text = payload["content"][0]["text"]
+/// Splits a story with the Claude Code CLI in headless mode (`claude -p`),
+/// so it runs on the user's Claude login instead of an API key. Blocking.
+pub fn split_into_scenes(cwd: &Path, story_text: &str) -> Result<Vec<NewScene>, AppError> {
+    let mut child = Command::new(resolve_claude()?)
+        .args(HEADLESS_ARGS)
+        .arg("--disable-slash-commands")
+        .args(["--system-prompt", SYSTEM_PROMPT])
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::new(format!("cannot start claude: {e}")))?;
+
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| AppError::new("claude stdin unavailable"))?
+        .write_all(story_text.as_bytes())
+        .map_err(|e| AppError::new(format!("cannot send story to claude: {e}")))?;
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| AppError::new(format!("claude failed: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::new(format!("claude exited with {}: {}", output.status, stderr.trim())));
+    }
+    parse_scenes(&extract_result(&output.stdout)?)
+}
+
+/// Pulls the model's reply out of `claude -p --output-format json` output.
+fn extract_result(stdout: &[u8]) -> Result<String, AppError> {
+    let payload: Value = serde_json::from_slice(stdout)
+        .map_err(|e| AppError::new(format!("unexpected claude output: {e}")))?;
+    if payload["is_error"].as_bool().unwrap_or(false) {
+        let message = payload["result"].as_str().unwrap_or("unknown error");
+        return Err(AppError::new(format!("claude error: {message}")));
+    }
+    payload["result"]
         .as_str()
-        .ok_or_else(|| AppError::new("Claude returned no text content"))?;
-    parse_scenes(text)
+        .map(str::to_owned)
+        .ok_or_else(|| AppError::new("claude output has no result"))
 }
 
 /// Extracts the JSON array from a model reply, tolerating code fences or stray prose.
@@ -73,6 +125,23 @@ mod tests {
     fn parses_array_wrapped_in_code_fence() {
         let reply = "```json\n[{\"text\":\"A\",\"image_prompt\":\"b\"}]\n```";
         assert_eq!(parse_scenes(reply).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn extracts_result_from_cli_json() {
+        let out = br#"{"type":"result","is_error":false,"result":"[]"}"#;
+        assert_eq!(extract_result(out).unwrap(), "[]");
+    }
+
+    #[test]
+    fn surfaces_cli_error_flag() {
+        let out = br#"{"is_error":true,"result":"Not logged in"}"#;
+        assert!(extract_result(out).unwrap_err().to_string().contains("Not logged in"));
+    }
+
+    #[test]
+    fn rejects_non_json_cli_output() {
+        assert!(extract_result(b"garbage").is_err());
     }
 
     #[test]

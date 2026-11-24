@@ -26,3 +26,4 @@ button:disabled { opacity: 0.5; cursor: default; }
 .error { background: #ffebe9; color: #b42318; padding: 10px 14px; border-radius: 6px; }
 .toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .console { height: 340px; margin-bottom: 16px; padding: 8px; background: #000; border-radius: 8px; }
+.hint { margin-right: auto; font-size: 13px; align-self: center; }

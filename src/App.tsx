@@ -109,6 +109,11 @@ export default function App() {
       </aside>
       <main>
         <div className="toolbar">
+          {consoleOpen && (
+            <span className="muted hint">
+              Результат попадает сюда, только если Claude запишет его в базу: просите «сохрани в базу».
+            </span>
+          )}
           <button onClick={toggleConsole}>
             {consoleOpen ? "Скрыть консоль Claude" : "Консоль Claude"}
           </button>
