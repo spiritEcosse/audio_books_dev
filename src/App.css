@@ -51,3 +51,9 @@ button:disabled { opacity: 0.5; cursor: default; }
 .proposal p { margin: 6px 0 0; white-space: pre-wrap; }
 .proposal-actions { display: flex; gap: 8px; margin-top: 8px; }
 button.secondary { background: #eef1f4 !important; color: #1f2328 !important; }
+.settings { background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; }
+.settings-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
+.settings-row label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #57606a; }
+.settings-row select, .settings-row input { font: inherit; padding: 5px 7px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #1f2328; width: 150px; }
+.stats { font-size: 14px; font-weight: 600; }
+.stats.over { color: #b42318; }

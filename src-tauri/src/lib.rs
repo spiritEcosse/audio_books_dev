@@ -3,6 +3,8 @@ mod chat;
 mod claude;
 mod db;
 mod error;
+mod profiles;
+mod stats;
 
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
@@ -10,12 +12,19 @@ use std::sync::{Mutex, MutexGuard};
 use rusqlite::Connection;
 use tauri::{Manager, State};
 
-use db::{Message, Scene, Story};
+use db::{Message, Scene, Story, StorySettings};
+use stats::StoryStats;
 use error::AppError;
 
 struct AppState {
     db: Mutex<Connection>,
     workspace: PathBuf,
+}
+
+impl AppState {
+    fn profiles_dir(&self) -> PathBuf {
+        self.workspace.join("profiles")
+    }
 }
 
 impl AppState {
@@ -69,14 +78,35 @@ struct StoryDetail {
     story: Story,
     scenes: Vec<Scene>,
     messages: Vec<Message>,
+    settings: StorySettings,
+    stats: StoryStats,
 }
 
 fn load_detail(conn: &Connection, id: i64) -> Result<StoryDetail, AppError> {
+    let story = db::get_story(conn, id)?;
+    let scenes = db::list_scenes(conn, id)?;
+    let settings = db::get_story_settings(conn, id, profiles::DEFAULT_PROFILE)?;
     Ok(StoryDetail {
-        story: db::get_story(conn, id)?,
-        scenes: db::list_scenes(conn, id)?,
+        stats: stats::estimate(&story, &scenes, &settings),
         messages: db::list_messages(conn, id)?,
+        story,
+        scenes,
+        settings,
     })
+}
+
+#[derive(serde::Serialize)]
+struct ProfileDto {
+    id: String,
+    label: String,
+    builtin: bool,
+}
+
+#[derive(serde::Serialize)]
+struct ProfilesInfo {
+    options: Vec<ProfileDto>,
+    /// Folder where users can drop their own `.md` profiles.
+    custom_dir: String,
 }
 
 #[tauri::command]
@@ -101,6 +131,39 @@ fn delete_story(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
 #[tauri::command]
 fn get_story(state: State<'_, AppState>, id: i64) -> Result<StoryDetail, AppError> {
     load_detail(&*state.conn()?, id)
+}
+
+#[tauri::command]
+fn list_profiles(state: State<'_, AppState>) -> ProfilesInfo {
+    let dir = state.profiles_dir();
+    ProfilesInfo {
+        options: profiles::list(&dir)
+            .into_iter()
+            .map(|p| ProfileDto { id: p.id, label: p.label, builtin: p.builtin })
+            .collect(),
+        custom_dir: dir.display().to_string(),
+    }
+}
+
+/// Saves audience, target length and writing profile. The Claude session is dropped so the
+/// next message starts fresh under the new system prompt, rebuilt from the saved history.
+#[tauri::command]
+fn set_story_settings(
+    state: State<'_, AppState>,
+    id: i64,
+    target_minutes: i64,
+    age_group: String,
+    profile: String,
+) -> Result<StoryDetail, AppError> {
+    if profiles::find(&state.profiles_dir(), &profile).is_none() {
+        return Err(AppError::new(format!("unknown profile: {profile}")));
+    }
+    let conn = state.conn()?;
+    db::get_story(&conn, id)?;
+    let settings = StorySettings { target_minutes, age_group, profile };
+    db::set_story_settings(&conn, id, &settings)?;
+    db::delete_session(&conn, id)?;
+    load_detail(&conn, id)
 }
 
 #[tauri::command]
@@ -169,7 +232,7 @@ async fn send_message(
         return Err(AppError::new("message must not be empty"));
     }
 
-    let (story, scenes, history, session_id, model, notes) = {
+    let (story, scenes, history, session_id, model, notes, settings) = {
         let conn = state.conn()?;
         let story = db::get_story(&conn, id)?;
         let scenes = db::list_scenes(&conn, id)?;
@@ -177,8 +240,9 @@ async fn send_message(
         let session_id = db::get_session(&conn, id)?;
         let model = selected_model(&conn)?;
         let notes = db::list_notes(&conn, id)?;
+        let settings = db::get_story_settings(&conn, id, profiles::DEFAULT_PROFILE)?;
         db::add_message(&conn, id, "user", &text, false)?;
-        (story, scenes, history, session_id, model, notes)
+        (story, scenes, history, session_id, model, notes, settings)
     };
 
     let note_ids: Vec<i64> = notes.iter().map(|n| n.id).collect();
@@ -186,8 +250,19 @@ async fn send_message(
     let prompt_text = chat::with_notes(&note_texts, &text);
 
     let workspace = state.workspace.clone();
+    let profile = profiles::resolve(&state.profiles_dir(), &settings.profile);
     let turn = tauri::async_runtime::spawn_blocking(move || {
-        chat::run_turn(&workspace, &story, &scenes, &history, session_id.as_deref(), &model, &prompt_text)
+        chat::run_turn(&chat::TurnInput {
+            cwd: &workspace,
+            story: &story,
+            scenes: &scenes,
+            settings: &settings,
+            profile: &profile,
+            history: &history,
+            session_id: session_id.as_deref(),
+            model: &model,
+            user_text: &prompt_text,
+        })
     })
     .await
     .map_err(|e| AppError::new(format!("chat task failed: {e}")))??;
@@ -217,6 +292,7 @@ pub fn run() {
             // Older builds wrote a CLAUDE.md here for the embedded console; it would now
             // contradict the chat protocol.
             let _ = std::fs::remove_file(data_dir.join("CLAUDE.md"));
+            std::fs::create_dir_all(data_dir.join("profiles"))?;
 
             let conn = Connection::open(data_dir.join("audiobooks.db"))?;
             db::init(&conn)?;
@@ -229,6 +305,8 @@ pub fn run() {
             delete_story,
             get_story,
             get_models,
+            list_profiles,
+            set_story_settings,
             set_model,
             send_message,
             accept_proposal,

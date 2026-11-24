@@ -4,7 +4,8 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::claude;
-use crate::db::{Message, NewScene, Scene, Story};
+use crate::db::{Message, NewScene, Scene, Story, StorySettings};
+use crate::profiles::Profile;
 use crate::error::AppError;
 
 const BASE_SYSTEM_PROMPT: &str = "You are the editing assistant inside an audiobook video app. \
@@ -23,11 +24,24 @@ You cannot touch files; the app applies \"scenes\" and, after confirmation, \"st
 The app may prepend <app_notes> to a user message to tell you what the user did outside the chat \
 (accepted or rejected a proposal, restored an older version); treat them as facts.";
 
-const STYLE_GUIDE: &str = include_str!("../prompts/fairy_tale_style.md");
+const AUDIENCE_GUIDE: &str = include_str!("../prompts/audience.md");
 
-/// Base chat protocol plus the fairy-tale writing guide, sent as the system prompt every turn.
-fn system_prompt() -> String {
-    format!("{BASE_SYSTEM_PROMPT}\n\n{STYLE_GUIDE}")
+/// Base chat protocol, audience rules and the story's writing profile: the system prompt of every turn.
+fn system_prompt(profile: &Profile) -> String {
+    format!("{BASE_SYSTEM_PROMPT}\n\n{AUDIENCE_GUIDE}\n\n{}", profile.body)
+}
+
+/// Everything one chat turn needs.
+pub struct TurnInput<'a> {
+    pub cwd: &'a Path,
+    pub story: &'a Story,
+    pub scenes: &'a [Scene],
+    pub settings: &'a StorySettings,
+    pub profile: &'a Profile,
+    pub history: &'a [Message],
+    pub session_id: Option<&'a str>,
+    pub model: &'a str,
+    pub user_text: &'a str,
 }
 
 #[derive(Deserialize)]
@@ -84,7 +98,7 @@ pub fn with_notes(notes: &[String], text: &str) -> String {
     format!("<app_notes>\n{}\n</app_notes>\n{text}", lines.join("\n"))
 }
 
-fn state_block(story: &Story, scenes: &[Scene]) -> String {
+fn state_block(story: &Story, scenes: &[Scene], settings: &StorySettings, profile: &Profile) -> String {
     let scenes_json = json!(
         scenes
             .iter()
@@ -92,8 +106,8 @@ fn state_block(story: &Story, scenes: &[Scene]) -> String {
             .collect::<Vec<_>>()
     );
     format!(
-        "<story title=\"{}\">\n{}\n</story>\n<current_scenes>\n{}\n</current_scenes>",
-        story.title, story.text, scenes_json
+        "<story_settings audience=\"{}\" target_minutes=\"{}\" profile=\"{}\"/>\n<story title=\"{}\">\n{}\n</story>\n<current_scenes>\n{}\n</current_scenes>",
+        settings.age_group, settings.target_minutes, profile.label, story.title, story.text, scenes_json
     )
 }
 
@@ -106,49 +120,35 @@ fn transcript(history: &[Message]) -> String {
 }
 
 /// Prompt for a brand-new Claude session: full state plus any earlier conversation.
-fn fresh_session_prompt(story: &Story, scenes: &[Scene], history: &[Message], user_text: &str) -> String {
-    let mut prompt = state_block(story, scenes);
-    if !history.is_empty() {
-        prompt.push_str(&format!("\n<conversation_so_far>\n{}\n</conversation_so_far>", transcript(history)));
+fn fresh_session_prompt(input: &TurnInput<'_>) -> String {
+    let mut prompt = state_block(input.story, input.scenes, input.settings, input.profile);
+    if !input.history.is_empty() {
+        prompt.push_str(&format!(
+            "\n<conversation_so_far>\n{}\n</conversation_so_far>",
+            transcript(input.history)
+        ));
     }
-    prompt.push_str(&format!("\n<user_message>\n{user_text}\n</user_message>"));
+    prompt.push_str(&format!("\n<user_message>\n{}\n</user_message>", input.user_text));
     prompt
 }
 
 /// Runs one chat turn. Continues the saved session when there is one; if that session no
 /// longer exists, rebuilds the context from SQLite history in a new session.
-/// `history` must not include the new user message. Blocking.
-pub fn run_turn(
-    cwd: &Path,
-    story: &Story,
-    scenes: &[Scene],
-    history: &[Message],
-    session_id: Option<&str>,
-    model: &str,
-    user_text: &str,
-) -> Result<Turn, AppError> {
-    let system = system_prompt();
-    let reply = match session_id {
-        Some(id) => match claude::run(cwd, model, &system, user_text, Some(id)) {
+/// `input.history` must not include the new user message. Blocking.
+pub fn run_turn(input: &TurnInput<'_>) -> Result<Turn, AppError> {
+    let system = system_prompt(input.profile);
+    let fresh = |system: &str| {
+        claude::run(input.cwd, input.model, system, &fresh_session_prompt(input), None)
+    };
+    let reply = match input.session_id {
+        Some(id) => match claude::run(input.cwd, input.model, &system, input.user_text, Some(id)) {
             Ok(reply) => reply,
             // Only a vanished session triggers the rebuild; other failures (network,
             // limits) are surfaced instead of silently paying for a full-context retry.
-            Err(err) if claude::is_session_missing(&err) => claude::run(
-                cwd,
-                model,
-                &system,
-                &fresh_session_prompt(story, scenes, history, user_text),
-                None,
-            )?,
+            Err(err) if claude::is_session_missing(&err) => fresh(&system)?,
             Err(err) => return Err(err),
         },
-        None => claude::run(
-            cwd,
-            model,
-            &system,
-            &fresh_session_prompt(story, scenes, history, user_text),
-            None,
-        )?,
+        None => fresh(&system)?,
     };
     let parsed = parse_envelope(&reply.text);
     Ok(Turn {
@@ -163,11 +163,20 @@ pub fn run_turn(
 mod tests {
     use super::*;
 
+    fn profile(body: &str) -> Profile {
+        Profile { id: "p".into(), label: "Label".into(), builtin: true, body: body.into() }
+    }
+
+    fn settings() -> StorySettings {
+        StorySettings { target_minutes: 7, age_group: "up_to_5".into(), profile: "p".into() }
+    }
+
     #[test]
-    fn system_prompt_contains_protocol_and_style_guide() {
-        let prompt = system_prompt();
+    fn system_prompt_contains_protocol_audience_rules_and_profile() {
+        let prompt = system_prompt(&profile("PROFILE-BODY"));
         assert!(prompt.contains("\"story_text\""));
-        assert!(prompt.contains("WRITING GUIDE"));
+        assert!(prompt.contains("AUDIENCE AND LENGTH"));
+        assert!(prompt.ends_with("PROFILE-BODY"));
     }
 
     #[test]
@@ -220,12 +229,31 @@ mod tests {
     }
 
     #[test]
-    fn fresh_prompt_includes_story_history_and_message() {
+    fn fresh_prompt_includes_settings_story_history_and_message() {
         let story = Story { id: 1, title: "T".into(), text: "body".into() };
-        let history = [Message { id: 1, role: "user".into(), content: "earlier".into(), scenes_changed: false, proposal: None }];
+        let history = [Message {
+            id: 1,
+            role: "user".into(),
+            content: "earlier".into(),
+            scenes_changed: false,
+            proposal: None,
+        }];
+        let (settings, profile) = (settings(), profile("x"));
+        let input = TurnInput {
+            cwd: Path::new("."),
+            story: &story,
+            scenes: &[],
+            settings: &settings,
+            profile: &profile,
+            history: &history,
+            session_id: None,
+            model: "m",
+            user_text: "now",
+        };
 
-        let prompt = fresh_session_prompt(&story, &[], &history, "now");
+        let prompt = fresh_session_prompt(&input);
 
+        assert!(prompt.contains("audience=\"up_to_5\"") && prompt.contains("target_minutes=\"7\""));
         assert!(prompt.contains("body") && prompt.contains("User: earlier") && prompt.contains("now"));
     }
 }

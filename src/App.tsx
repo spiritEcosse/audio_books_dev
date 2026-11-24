@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type ModelsInfo, type Story, type StoryDetail } from "./api";
+import { api, type ModelsInfo, type ProfilesInfo, type Story, type StoryDetail, type StorySettings } from "./api";
 import { Chat } from "./Chat";
 import { Revisions } from "./Revisions";
 import { ModelPicker } from "./ModelPicker";
 import { SceneList } from "./SceneList";
 import { StoryForm } from "./StoryForm";
+import { StorySettingsPanel } from "./StorySettingsPanel";
 import "./App.css";
 
 function errorMessage(err: unknown): string {
@@ -17,6 +18,7 @@ export default function App() {
   const [detail, setDetail] = useState<StoryDetail | null>(null);
   const [pendingText, setPendingText] = useState<string | null>(null);
   const [models, setModels] = useState<ModelsInfo | null>(null);
+  const [profiles, setProfiles] = useState<ProfilesInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const run = useCallback(async (action: () => Promise<void>) => {
@@ -40,6 +42,16 @@ export default function App() {
   useEffect(() => {
     void run(async () => setModels(await api.getModels()));
   }, [run]);
+
+  useEffect(() => {
+    void run(async () => setProfiles(await api.listProfiles()));
+  }, [run]);
+
+  const changeSettings = (settings: StorySettings) =>
+    run(async () => {
+      if (selectedId === null) return;
+      setDetail(await api.setStorySettings(selectedId, settings));
+    });
 
   const changeModel = (id: string) =>
     run(async () => {
@@ -114,6 +126,13 @@ export default function App() {
           <div className="workspace">
             <div className="scenes-pane">
               <h1>{detail.story.title}</h1>
+              <StorySettingsPanel
+                settings={detail.settings}
+                stats={detail.stats}
+                profiles={profiles}
+                disabled={pendingText !== null}
+                onChange={(next) => void changeSettings(next)}
+              />
               <details className="story-text">
                 <summary>Текст истории</summary>
                 <p>{detail.story.text}</p>

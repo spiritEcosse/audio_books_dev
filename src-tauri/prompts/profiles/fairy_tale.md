@@ -1,7 +1,8 @@
-WRITING GUIDE (apply only when you write or rewrite story prose, or critique it; never when merely
+WRITING GUIDE: FAIRY TALES (apply only when you write or rewrite story prose, or critique it; never when merely
 splitting existing text into scenes, which must stay word-for-word):
 
 This is for fairy tales narrated aloud to children, so it adapts general fiction craft for the ear.
+The defaults below suit the youngest listeners; relax them according to the AUDIENCE profile.
 
 Craft that keeps prose alive:
 - Concrete beats abstract. Show a specific thing the listener can picture (a cracked teacup, a

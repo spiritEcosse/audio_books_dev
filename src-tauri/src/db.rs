@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS pending_notes (
     story_id INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
     text     TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS story_settings (
+    story_id       INTEGER PRIMARY KEY REFERENCES stories(id) ON DELETE CASCADE,
+    target_minutes INTEGER NOT NULL,
+    age_group      TEXT NOT NULL,
+    profile        TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -99,6 +105,19 @@ pub struct Revision {
 pub struct Note {
     pub id: i64,
     pub text: String,
+}
+
+pub const AGE_GROUPS: [&str; 4] = ["up_to_5", "up_to_10", "up_to_15", "adult"];
+pub const DEFAULT_AGE_GROUP: &str = "up_to_10";
+pub const DEFAULT_TARGET_MINUTES: i64 = 10;
+pub const MIN_TARGET_MINUTES: i64 = 1;
+pub const MAX_TARGET_MINUTES: i64 = 600;
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct StorySettings {
+    pub target_minutes: i64,
+    pub age_group: String,
+    pub profile: String,
 }
 
 const MAX_REVISIONS_LISTED: i64 = 100;
@@ -320,6 +339,51 @@ pub fn delete_notes(conn: &Connection, ids: &[i64]) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Per-story settings; stories without saved settings get the defaults.
+pub fn get_story_settings(conn: &Connection, story_id: i64, default_profile: &str) -> Result<StorySettings, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT target_minutes, age_group, profile FROM story_settings WHERE story_id = ?1",
+    )?;
+    let mut rows = stmt.query([story_id])?;
+    let saved = rows
+        .next()?
+        .map(|row| -> rusqlite::Result<StorySettings> {
+            Ok(StorySettings { target_minutes: row.get(0)?, age_group: row.get(1)?, profile: row.get(2)? })
+        })
+        .transpose()?;
+    Ok(saved.unwrap_or_else(|| StorySettings {
+        target_minutes: DEFAULT_TARGET_MINUTES,
+        age_group: DEFAULT_AGE_GROUP.to_owned(),
+        profile: default_profile.to_owned(),
+    }))
+}
+
+/// Validates minutes and age group; the caller validates the profile id.
+pub fn set_story_settings(conn: &Connection, story_id: i64, settings: &StorySettings) -> Result<(), AppError> {
+    if !(MIN_TARGET_MINUTES..=MAX_TARGET_MINUTES).contains(&settings.target_minutes) {
+        return Err(AppError::new(format!(
+            "target length must be {MIN_TARGET_MINUTES}-{MAX_TARGET_MINUTES} minutes"
+        )));
+    }
+    if !AGE_GROUPS.contains(&settings.age_group.as_str()) {
+        return Err(AppError::new(format!("unknown audience: {}", settings.age_group)));
+    }
+    conn.execute(
+        "INSERT INTO story_settings (story_id, target_minutes, age_group, profile) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(story_id) DO UPDATE SET target_minutes = excluded.target_minutes,
+            age_group = excluded.age_group, profile = excluded.profile",
+        params![story_id, settings.target_minutes, settings.age_group, settings.profile],
+    )?;
+    Ok(())
+}
+
+/// Forgets the Claude session so the next turn rebuilds context from history
+/// (a resumed session keeps its old system prompt).
+pub fn delete_session(conn: &Connection, story_id: i64) -> Result<(), AppError> {
+    conn.execute("DELETE FROM chat_sessions WHERE story_id = ?1", [story_id])?;
+    Ok(())
+}
+
 pub fn get_session(conn: &Connection, story_id: i64) -> Result<Option<String>, AppError> {
     let mut stmt = conn.prepare("SELECT session_id FROM chat_sessions WHERE story_id = ?1")?;
     let mut rows = stmt.query([story_id])?;
@@ -443,5 +507,31 @@ mod tests {
         set_setting(&conn, "model", "b").unwrap();
 
         assert_eq!(get_setting(&conn, "model").unwrap().as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn story_settings_default_then_override_and_validate() {
+        let conn = memory_db();
+        let story = create_story(&conn, "A", "t").unwrap();
+        let defaults = get_story_settings(&conn, story.id, "fairy_tale").unwrap();
+        assert_eq!((defaults.target_minutes, defaults.age_group.as_str()), (10, "up_to_10"));
+
+        let custom = StorySettings { target_minutes: 5, age_group: "up_to_5".into(), profile: "novel".into() };
+        set_story_settings(&conn, story.id, &custom).unwrap();
+        assert_eq!(get_story_settings(&conn, story.id, "fairy_tale").unwrap(), custom);
+
+        let too_long = StorySettings { target_minutes: 9999, ..custom.clone() };
+        assert!(set_story_settings(&conn, story.id, &too_long).is_err());
+        let bad_age = StorySettings { age_group: "toddler".into(), ..custom };
+        assert!(set_story_settings(&conn, story.id, &bad_age).is_err());
+    }
+
+    #[test]
+    fn delete_session_forgets_it() {
+        let conn = memory_db();
+        let story = create_story(&conn, "A", "t").unwrap();
+        set_session(&conn, story.id, "s1").unwrap();
+        delete_session(&conn, story.id).unwrap();
+        assert_eq!(get_session(&conn, story.id).unwrap(), None);
     }
 }
