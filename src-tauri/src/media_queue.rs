@@ -13,6 +13,12 @@ use crate::media::{KIND_AUDIO, STATUS_REQUESTED};
 pub const CONNECTOR_TOOLS: &str = "mcp__claude_ai_ElevenLabs";
 /// Cheap model: it only forwards text to tools and relays their answers.
 pub const MEDIA_MODEL: &str = "claude-haiku-5-5";
+
+/// Turn budget of a generation run before the per-item share. After the generation calls Claude polls the status
+/// tool, one turn per poll with no way to wait, and a generation takes up to a minute or more. Running out of turns
+/// while ElevenLabs is still working ends the run with the credits already spent and nothing downloaded, so this is
+/// deliberately generous: a Haiku turn costs a fraction of a cent, a repeated generation costs hundreds of credits.
+pub const GENERATE_BASE_TURNS: u32 = 40;
 const TRUSTED_HOST: &str = "elevenlabsusercontent.com";
 const TRANSFER_TIMEOUT_SECS: &str = "120";
 const IMAGE_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];

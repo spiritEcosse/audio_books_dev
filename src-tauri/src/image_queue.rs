@@ -15,7 +15,6 @@ use crate::media_queue::{self, CONNECTOR_TOOLS, ItemResult, MEDIA_MODEL};
 
 const ESTIMATE_BASE_TURNS: u32 = 6;
 const UPLOAD_BASE_TURNS: u32 = 6;
-const GENERATE_BASE_TURNS: u32 = 14;
 const TURNS_PER_ITEM: u32 = 3;
 const MAX_REFERENCE_UPLOAD_BYTES: u64 = 20 * 1024 * 1024;
 pub const ANCHOR_POSITION: i64 = 0;
@@ -183,7 +182,7 @@ pub fn generate(cwd: &Path, dir: &Path, items: &[QueuedImage]) -> Result<Vec<Ite
         Value::Array(assets_json),
         Value::Array(items_json)
     );
-    let turns = GENERATE_BASE_TURNS + TURNS_PER_ITEM * (items.len() + assets.len()) as u32;
+    let turns = media_queue::GENERATE_BASE_TURNS + TURNS_PER_ITEM * (items.len() + assets.len()) as u32;
     let reply = claude::run_connector(cwd, MEDIA_MODEL, GENERATE_SYSTEM, &prompt, CONNECTOR_TOOLS, turns)?;
     let outcomes = media_queue::parse_outcomes(&reply.text)?;
     Ok(items
@@ -314,3 +313,10 @@ mod tests {
         assert!(GENERATE_SYSTEM.contains("creative_finalize_asset_upload"));
     }
 }
+    #[test]
+    fn a_single_image_with_a_reference_gets_a_long_polling_budget() {
+        // finalize the reference + generate + status polls while a ~1 min generation runs
+        let turns = media_queue::GENERATE_BASE_TURNS + TURNS_PER_ITEM * 2;
+        assert!(turns >= 40, "{turns} turns ended a real run with the image generated but not downloaded");
+    }
+

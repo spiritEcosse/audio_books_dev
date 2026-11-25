@@ -13,7 +13,6 @@ use crate::media::{self, KIND_AUDIO};
 use crate::media_queue::{self, CONNECTOR_TOOLS, ItemResult, MEDIA_MODEL};
 
 const ESTIMATE_BASE_TURNS: u32 = 6;
-const GENERATE_BASE_TURNS: u32 = 12;
 const TURNS_PER_ITEM: u32 = 2;
 
 /// The prompts name the narration model literally; `narration_model_matches_the_prompts` guards it.
@@ -67,7 +66,7 @@ pub fn estimate(cwd: &Path, items: &[QueuedAudio]) -> Result<Vec<(i64, f64)>, Ap
 /// Spends credits. Blocking.
 pub fn generate(cwd: &Path, dir: &Path, items: &[QueuedAudio]) -> Result<Vec<ItemResult>, AppError> {
     let prompt = media_queue::items_prompt("Generate narration for these items", items_json(items));
-    let turns = GENERATE_BASE_TURNS + TURNS_PER_ITEM * items.len() as u32;
+    let turns = media_queue::GENERATE_BASE_TURNS + TURNS_PER_ITEM * items.len() as u32;
     let reply = claude::run_connector(cwd, MEDIA_MODEL, GENERATE_SYSTEM, &prompt, CONNECTOR_TOOLS, turns)?;
     let outcomes = media_queue::parse_outcomes(&reply.text)?;
     Ok(items
