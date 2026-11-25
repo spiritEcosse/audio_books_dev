@@ -15,11 +15,20 @@ Audio tags (the narration model eleven_v4 reads them as delivery instructions, n
   e.g. "[softly] The little fox curled up in the moss. [pause] [whispers] Goodnight, moon."
 - A tag holds until the next one, so change tags only where the delivery changes, not on every sentence.
 - Describe HOW a line is spoken, never what someone does: no [smiling], [standing], [music].
-- Plain words, no hyphens. Preferred set: [softly], [slowly], [warmly], [whispers], [curious],
-  [sleepy], [yawns], [sighs], [pause], [long pause], [childlike voice], [elderly voice], [deep voice].
-- Default delivery is [softly] [slowly]; start the first scene with it. Fade to [whispers] and
+- Plain words, no hyphens. Preferred set, all from the model's documented tags:
+  delivery [softly], [slowly], [warmly], [whispers], [cautiously];
+  emotion [curious], [tired], [nervous], [surprised], [happy];
+  non-verbal [sighs], [exhales], [giggles], [chuckles], [gasps];
+  pauses [short pause], [pause], [long pause];
+  voices [childlike voice], [elderly voice], [deep voice], [high voice], [trembling voice].
+  Free-form words such as [sleepy], [yawns], [gently] also work but are less predictable; use them sparingly.
+- Default delivery is [softly] [slowly]; start the first scene with it. Fade to [tired] or [whispers] and
   [long pause] in the last scene. Use a distinct voice tag per speaking character, sparingly.
-- Pauses also come from ellipses (…) and commas; do not overuse tags: about one per sentence group.
+- Tags can be stacked for layered delivery: "[tired] [whispers] Goodnight, little one."
+- Avoid loud or energetic tags ([excited], [shouting], [laughs harder], [dramatically]); they break the calm.
+  A brief [giggles] or [gasps] in an early, lively scene is fine.
+- Pauses also come from ellipses (…), em-dashes (—) and commas. Use capitals for emphasis very rarely, if at all.
+  Do not overuse tags: about one per sentence group.
 - Tags live only in scene "text". Never put them in "image_prompt" or in "story_text" (the readable
   story text stays tag-free).
 - When you edit or re-split scenes, keep the existing tags of every scene you do not need to change, and
