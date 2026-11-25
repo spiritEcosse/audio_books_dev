@@ -64,10 +64,39 @@ export function rangeCost(
     );
 }
 
+const ALL_KINDS: readonly AssetKind[] = ["image", "audio"];
+
+/** The cost of running both images and narration over the range. */
+export function allCost(media: MediaInfo, scenes: readonly Scene[], from: number, to: number): RangeCost {
+  return ALL_KINDS.map((kind) => rangeCost(media, scenes, kind, from, to)).reduce<RangeCost>(
+    (total, part) => ({
+      count: total.count + part.count,
+      credits: total.credits + part.credits,
+      exact: total.exact && part.exact,
+    }),
+    { count: 0, credits: 0, exact: true },
+  );
+}
+
 /** Tooltip text: what a run over this range would cost. */
 export function costTip(cost: RangeCost): string {
   if (cost.count === 0) return "Запускать нечего: всё готово или уже генерируется";
   return `Этот запуск: ${cost.exact ? "" : "≈"}${formatCredits(cost.credits)} кр. (${cost.count} шт.)`;
+}
+
+/** Queues what images and narration still need over the range (instant, nothing is spent). */
+export async function queueAll(
+  storyId: number,
+  scenes: readonly Scene[],
+  media: MediaInfo,
+  from: number,
+  to: number,
+): Promise<MediaInfo> {
+  let latest = media;
+  for (const kind of ALL_KINDS) {
+    latest = await queueRange(storyId, kind, scenes, latest, from, to);
+  }
+  return latest;
 }
 
 /** Queues what the range still needs (instant, nothing is spent). */
