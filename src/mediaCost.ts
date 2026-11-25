@@ -4,6 +4,14 @@ export function formatCredits(credits: number): string {
   return Math.round(credits).toLocaleString("ru-RU");
 }
 
+/** A media action that is running: which button started it and what it is doing. */
+export interface MediaBusy {
+  readonly key: string;
+  readonly label: string;
+}
+
+export type MediaChange = (action: () => Promise<MediaInfo>, busy?: MediaBusy) => void;
+
 export function findAsset(media: MediaInfo, position: number, kind: AssetKind): SceneAsset | undefined {
   return media.assets.find((asset) => asset.position === position && asset.kind === kind);
 }

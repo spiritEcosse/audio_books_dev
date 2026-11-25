@@ -83,6 +83,11 @@ pub fn run(
     if let Some(session_id) = resume {
         command.args(["--resume", session_id]);
     }
+    exec(command, cwd, prompt)
+}
+
+/// Spawns the prepared command, feeds it the prompt through stdin and parses the JSON reply.
+fn exec(mut command: Command, cwd: &Path, prompt: &str) -> Result<CliReply, AppError> {
     let mut child = command
         .current_dir(cwd)
         .stdin(Stdio::piped())
@@ -111,6 +116,38 @@ pub fn run(
         return Err(AppError::new(format!("claude exited with {}: {}", output.status, details.trim())));
     }
     parse_cli_output(&output.stdout)
+}
+
+/// A headless turn that may call claude.ai connector tools. User settings (hooks, plugins) stay off.
+/// Do not add `--tools`: combined with `--setting-sources` it stops connector tools from loading.
+const CONNECTOR_ARGS: [&str; 6] =
+    ["-p", "--output-format", "json", "--setting-sources", "", "--disable-slash-commands"];
+
+/// Runs one headless turn that may use the connector tools matching `allowed_tools`
+/// (e.g. `mcp__claude_ai_ElevenLabs`); everything else stays unapproved and is denied. Blocking.
+pub fn run_connector(
+    cwd: &Path,
+    model: &str,
+    system_prompt: &str,
+    prompt: &str,
+    allowed_tools: &str,
+    max_turns: u32,
+) -> Result<CliReply, AppError> {
+    if !is_known_model(model) {
+        return Err(AppError::new(format!("unknown model: {model}")));
+    }
+    let mut command = Command::new(resolve_claude()?);
+    command.args(CONNECTOR_ARGS).args([
+        "--model",
+        model,
+        "--system-prompt",
+        system_prompt,
+        "--allowedTools",
+        allowed_tools,
+        "--max-turns",
+        &max_turns.to_string(),
+    ]);
+    exec(command, cwd, prompt)
 }
 
 const SESSION_MISSING_MARKER: &str = "No conversation found";

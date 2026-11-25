@@ -156,6 +156,20 @@ export const api = {
     invoke<MediaInfo>("request_asset", { storyId, position, kind }),
   requestMissingAssets: (storyId: number) =>
     invoke<MediaInfo>("request_missing_assets", { storyId }),
+  cancelRequest: (storyId: number, position: number, kind: AssetKind) =>
+    invoke<MediaInfo>("cancel_request", { storyId, position, kind }),
+  cancelQueue: (storyId: number) => invoke<MediaInfo>("cancel_queue", { storyId }),
+  /** Prices queued narration; one scene when `position` is given, else every unpriced one. Free. */
+  estimateAudioQueue: (storyId: number, from?: number, to?: number) =>
+    invoke<MediaInfo>("estimate_audio_queue", { storyId, from: from ?? null, to: to ?? null }),
+  /** Generates priced narration (one scene or all). Spends credits. */
+  generateAudioQueue: (storyId: number, from?: number, to?: number) =>
+    invoke<MediaInfo>("generate_audio_queue", { storyId, from: from ?? null, to: to ?? null }),
+  /** Same for images; generation wires scene 0 and the scene's own reference in. Spends credits. */
+  estimateImageQueue: (storyId: number, from?: number, to?: number) =>
+    invoke<MediaInfo>("estimate_image_queue", { storyId, from: from ?? null, to: to ?? null }),
+  generateImageQueue: (storyId: number, from?: number, to?: number) =>
+    invoke<MediaInfo>("generate_image_queue", { storyId, from: from ?? null, to: to ?? null }),
   setSceneReference: (storyId: number, position: number, fileName: string, bytes: number[]) =>
     invoke<MediaInfo>("set_scene_reference", { storyId, position, fileName, bytes }),
   clearSceneReference: (storyId: number, position: number) =>

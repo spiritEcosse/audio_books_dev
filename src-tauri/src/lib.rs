@@ -3,7 +3,10 @@ mod chat;
 mod claude;
 mod db;
 mod error;
+mod audio_queue;
+mod image_queue;
 mod media;
+mod media_queue;
 mod profiles;
 mod stats;
 
@@ -282,6 +285,203 @@ fn request_asset(
 }
 
 #[tauri::command]
+fn cancel_request(
+    state: State<'_, AppState>,
+    story_id: i64,
+    position: i64,
+    kind: String,
+) -> Result<MediaInfo, AppError> {
+    let conn = state.conn()?;
+    media::cancel_request(&conn, story_id, position, &kind)?;
+    load_media(&state, &conn, story_id)
+}
+
+#[tauri::command]
+fn cancel_queue(state: State<'_, AppState>, story_id: i64) -> Result<MediaInfo, AppError> {
+    let conn = state.conn()?;
+    media::cancel_queue(&conn, story_id)?;
+    load_media(&state, &conn, story_id)
+}
+
+/// Whether a scene position lies in the optional inclusive range (no bound = open end).
+fn in_range(position: i64, from: Option<i64>, to: Option<i64>) -> bool {
+    from.is_none_or(|f| position >= f) && to.is_none_or(|t| position <= t)
+}
+
+/// Measures the exact price of the queued narration through Claude's ElevenLabs connector.
+/// Nothing is charged.
+#[tauri::command]
+async fn estimate_audio_queue(
+    state: State<'_, AppState>,
+    story_id: i64,
+    from: Option<i64>,
+    to: Option<i64>,
+) -> Result<MediaInfo, AppError> {
+    let items: Vec<audio_queue::QueuedAudio> = {
+        let conn = state.conn()?;
+        db::get_story(&conn, story_id)?;
+        audio_queue::queued_audio(&conn, story_id)?
+            .into_iter()
+            .filter(|item| in_range(item.position, from, to) && item.estimate_credits.is_none())
+            .collect()
+    };
+    if items.is_empty() {
+        // Pricing a whole story with nothing to price is a no-op; asking about one scene is a mistake.
+        if from.is_none() && to.is_none() {
+            let conn = state.conn()?;
+            return load_media(&state, &conn, story_id);
+        }
+        return Err(AppError::new("no unpriced narration is waiting for this scene"));
+    }
+    let workspace = state.workspace.clone();
+    let estimates = tauri::async_runtime::spawn_blocking(move || audio_queue::estimate(&workspace, &items))
+        .await
+        .map_err(|e| AppError::new(format!("estimate task failed: {e}")))??;
+    let conn = state.conn()?;
+    media_queue::save_estimates(&conn, story_id, media::KIND_AUDIO, &estimates)?;
+    load_media(&state, &conn, story_id)
+}
+
+/// Generates the queued narration that already has an exact price (one take each). Spends credits.
+#[tauri::command]
+async fn generate_audio_queue(
+    state: State<'_, AppState>,
+    story_id: i64,
+    from: Option<i64>,
+    to: Option<i64>,
+) -> Result<MediaInfo, AppError> {
+    let items: Vec<audio_queue::QueuedAudio> = {
+        let conn = state.conn()?;
+        db::get_story(&conn, story_id)?;
+        audio_queue::queued_audio(&conn, story_id)?
+            .into_iter()
+            .filter(|item| in_range(item.position, from, to))
+            .collect()
+    };
+    if items.is_empty() {
+        return Err(AppError::new("no narration is queued for generation"));
+    }
+    let positions: Vec<i64> = items.iter().map(|item| item.position).collect();
+    {
+        let conn = state.conn()?;
+        media_queue::mark_started(&conn, story_id, media::KIND_AUDIO, &positions)?;
+    }
+
+    let workspace = state.workspace.clone();
+    let media_dir = media::story_media_dir(&workspace, story_id);
+    let outcome = tauri::async_runtime::spawn_blocking(move || audio_queue::generate(&workspace, &media_dir, &items))
+        .await
+        .map_err(|e| AppError::new(format!("generation task failed: {e}")))
+        .and_then(|inner| inner);
+
+    let conn = state.conn()?;
+    match outcome {
+        Ok(results) => media_queue::apply_results(&conn, story_id, media::KIND_AUDIO, &results)?,
+        Err(err) => {
+            let message = format!("generation failed, credits may already have been spent: {err}");
+            media_queue::fail_started(&conn, story_id, media::KIND_AUDIO, &positions, &message)?;
+        }
+    }
+    load_media(&state, &conn, story_id)
+}
+
+/// Measures the exact price of the queued images through Claude's ElevenLabs connector. Nothing is charged.
+#[tauri::command]
+async fn estimate_image_queue(
+    state: State<'_, AppState>,
+    story_id: i64,
+    from: Option<i64>,
+    to: Option<i64>,
+) -> Result<MediaInfo, AppError> {
+    let items: Vec<image_queue::QueuedImage> = {
+        let conn = state.conn()?;
+        db::get_story(&conn, story_id)?;
+        image_queue::queued_images(&conn, story_id)?
+            .into_iter()
+            .filter(|item| in_range(item.position, from, to) && item.estimate_credits.is_none())
+            .collect()
+    };
+    if items.is_empty() {
+        if from.is_none() && to.is_none() {
+            let conn = state.conn()?;
+            return load_media(&state, &conn, story_id);
+        }
+        return Err(AppError::new("no unpriced image is waiting for this scene"));
+    }
+    let workspace = state.workspace.clone();
+    let estimates = tauri::async_runtime::spawn_blocking(move || image_queue::estimate(&workspace, &items))
+        .await
+        .map_err(|e| AppError::new(format!("estimate task failed: {e}")))??;
+    let conn = state.conn()?;
+    media_queue::save_estimates(&conn, story_id, media::KIND_IMAGE, &estimates)?;
+    load_media(&state, &conn, story_id)
+}
+
+/// Generates the queued images that already have an exact price (one take each), with scene 0 and the
+/// scene's custom reference wired in. Scene 0 goes first, so the other scenes use its new image as their
+/// anchor; if it fails, the rest stay queued. Spends credits.
+#[tauri::command]
+async fn generate_image_queue(
+    state: State<'_, AppState>,
+    story_id: i64,
+    from: Option<i64>,
+    to: Option<i64>,
+) -> Result<MediaInfo, AppError> {
+    let mut generated_any = false;
+    for anchor_batch in [true, false] {
+        let items: Vec<image_queue::QueuedImage> = {
+            let conn = state.conn()?;
+            db::get_story(&conn, story_id)?;
+            image_queue::queued_images(&conn, story_id)?
+                .into_iter()
+                .filter(|item| {
+                    in_range(item.position, from, to)
+                        && (item.position == image_queue::ANCHOR_POSITION) == anchor_batch
+                })
+                .collect()
+        };
+        if items.is_empty() {
+            continue;
+        }
+        generated_any = true;
+        let positions: Vec<i64> = items.iter().map(|item| item.position).collect();
+        {
+            let conn = state.conn()?;
+            media_queue::mark_started(&conn, story_id, media::KIND_IMAGE, &positions)?;
+        }
+
+        let workspace = state.workspace.clone();
+        let media_dir = media::story_media_dir(&workspace, story_id);
+        let outcome =
+            tauri::async_runtime::spawn_blocking(move || image_queue::generate(&workspace, &media_dir, &items))
+                .await
+                .map_err(|e| AppError::new(format!("generation task failed: {e}")))
+                .and_then(|inner| inner);
+
+        let conn = state.conn()?;
+        let failed = match outcome {
+            Ok(results) => {
+                media_queue::apply_results(&conn, story_id, media::KIND_IMAGE, &results)?;
+                results.iter().any(|r| r.saved.is_err())
+            }
+            Err(err) => {
+                let message = format!("generation failed, credits may already have been spent: {err}");
+                media_queue::fail_started(&conn, story_id, media::KIND_IMAGE, &positions, &message)?;
+                true
+            }
+        };
+        if anchor_batch && failed {
+            break;
+        }
+    }
+    if !generated_any {
+        return Err(AppError::new("no images are queued for generation"));
+    }
+    let conn = state.conn()?;
+    load_media(&state, &conn, story_id)
+}
+
+#[tauri::command]
 fn request_missing_assets(state: State<'_, AppState>, story_id: i64) -> Result<MediaInfo, AppError> {
     let conn = state.conn()?;
     media::request_missing(&conn, story_id)?;
@@ -414,6 +614,12 @@ pub fn run() {
             set_voice,
             request_asset,
             request_missing_assets,
+            cancel_request,
+            cancel_queue,
+            estimate_audio_queue,
+            generate_audio_queue,
+            estimate_image_queue,
+            generate_image_queue,
             set_scene_reference,
             clear_scene_reference
         ])

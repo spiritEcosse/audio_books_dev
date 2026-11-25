@@ -227,6 +227,30 @@ pub fn request_asset(conn: &Connection, story_id: i64, position: i64, kind: &str
     Ok(())
 }
 
+fn cancel_matching(conn: &Connection, story_id: i64, position: Option<i64>, kind: Option<&str>) -> Result<(), AppError> {
+    let scope = "story_id = ?1 AND (?2 IS NULL OR position = ?2) AND (?3 IS NULL OR kind = ?3)
+                 AND status = 'requested' AND started_at IS NULL";
+    let args = params![story_id, position, kind];
+    // The request replaced a ready file: keep the file, but its source is unknown, so it reads as outdated.
+    conn.execute(
+        &format!("UPDATE scene_assets SET status = 'ready', source = '', estimate_credits = NULL,
+                  updated_at = CURRENT_TIMESTAMP WHERE {scope} AND file_path IS NOT NULL"),
+        args,
+    )?;
+    conn.execute(&format!("DELETE FROM scene_assets WHERE {scope} AND file_path IS NULL"), args)?;
+    Ok(())
+}
+
+/// Takes one queued request back out of the queue. Generation already running is left alone.
+pub fn cancel_request(conn: &Connection, story_id: i64, position: i64, kind: &str) -> Result<(), AppError> {
+    cancel_matching(conn, story_id, Some(position), Some(kind))
+}
+
+/// Empties the queue of a story, except items already being generated.
+pub fn cancel_queue(conn: &Connection, story_id: i64) -> Result<(), AppError> {
+    cancel_matching(conn, story_id, None, None)
+}
+
 /// Queues every asset that is neither ready-and-current nor already queued. Returns how many.
 pub fn request_missing(conn: &Connection, story_id: i64) -> Result<usize, AppError> {
     let assets = list_assets(conn, story_id)?;
@@ -377,6 +401,41 @@ mod tests {
         assert_eq!(assets[0].status, STATUS_REQUESTED);
         assert_eq!(assets[0].model_id, DEFAULT_IMAGE_MODEL);
         assert!(!assets[0].stale);
+    }
+
+    #[test]
+    fn cancelling_a_fresh_request_removes_it() {
+        let (conn, story) = setup();
+        request_asset(&conn, story, 0, KIND_AUDIO).unwrap();
+        cancel_request(&conn, story, 0, KIND_AUDIO).unwrap();
+        assert!(list_assets(&conn, story).unwrap().is_empty());
+    }
+
+    #[test]
+    fn cancelling_a_re_request_keeps_the_old_file_marked_outdated() {
+        let (conn, story) = setup();
+        request_asset(&conn, story, 0, KIND_AUDIO).unwrap();
+        conn.execute("UPDATE scene_assets SET status = 'ready', file_path = '/a.mp3'", []).unwrap();
+        request_asset(&conn, story, 0, KIND_AUDIO).unwrap();
+
+        cancel_request(&conn, story, 0, KIND_AUDIO).unwrap();
+
+        let asset = &list_assets(&conn, story).unwrap()[0];
+        assert_eq!((asset.status.as_str(), asset.file_path.as_deref(), asset.stale), ("ready", Some("/a.mp3"), true));
+    }
+
+    #[test]
+    fn cancel_queue_skips_items_in_progress() {
+        let (conn, story) = setup();
+        request_asset(&conn, story, 0, KIND_AUDIO).unwrap();
+        request_asset(&conn, story, 1, KIND_AUDIO).unwrap();
+        conn.execute("UPDATE scene_assets SET started_at = CURRENT_TIMESTAMP WHERE position = 0", []).unwrap();
+
+        cancel_queue(&conn, story).unwrap();
+
+        let left = list_assets(&conn, story).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].position, 0);
     }
 
     #[test]

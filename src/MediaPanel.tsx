@@ -1,14 +1,22 @@
 import { api, type MediaInfo, type Scene } from "./api";
-import { formatCredits, summarize } from "./mediaCost";
+import { BusyButton } from "./BusyButton";
+import { type MediaBusy, type MediaChange, formatCredits, summarize } from "./mediaCost";
+
 interface Props {
   media: MediaInfo;
   scenes: readonly Scene[];
   disabled: boolean;
-  onChange: (action: () => Promise<MediaInfo>) => void;
+  busy: MediaBusy | null;
+  onChange: MediaChange;
 }
 
-export function MediaPanel({ media, scenes, disabled, onChange }: Props) {
+export function MediaPanel({ media, scenes, disabled, busy, onChange }: Props) {
   const { missing, queued, queuedExact } = summarize(media, scenes);
+  const unpriced = media.assets.filter(
+    (a) => a.status === "requested" && !a.in_progress && a.estimate_credits == null,
+  );
+  const estimateAll = () =>
+    api.estimateAudioQueue(media.story_id).then(() => api.estimateImageQueue(media.story_id));
   const selectedVoice = media.voices.find((voice) => voice.id === media.voice_id);
   return (
     <section className="media-panel">
@@ -54,18 +62,50 @@ export function MediaPanel({ media, scenes, disabled, onChange }: Props) {
         {queued.items > 0 && (queuedExact ? ", точная оценка" : ", приблизительно: скажите Claude «оцени очередь»")})
       </p>
       <div className="media-actions">
-        <button
+        <BusyButton
+          busy={busy}
+          tag="panel:request"
           disabled={disabled || missing.items === 0}
-          onClick={() => onChange(() => api.requestMissingAssets(media.story_id))}
+          onClick={() =>
+            onChange(() => api.requestMissingAssets(media.story_id), {
+              key: "panel:request",
+              label: "Ставлю в очередь…",
+            })
+          }
         >
-          Запросить всё недостающее
-        </button>
-        <button disabled={disabled} onClick={() => onChange(() => api.getMedia(media.story_id))}>
+          Поставить в очередь всё недостающее
+        </BusyButton>
+        <BusyButton
+          busy={busy}
+          tag="panel:cancel"
+          disabled={disabled || queued.items === 0}
+          onClick={() =>
+            onChange(() => api.cancelQueue(media.story_id), { key: "panel:cancel", label: "Очищаю очередь…" })
+          }
+        >
+          Очистить очередь
+        </BusyButton>
+        <BusyButton
+          busy={busy}
+          tag="panel:estimate"
+          disabled={disabled || unpriced.length === 0}
+          onClick={() => onChange(estimateAll, { key: "panel:estimate", label: "Измеряю цены…" })}
+        >
+          Измерить точные цены{unpriced.length > 0 ? ` (${unpriced.length})` : ""}
+        </BusyButton>
+        <BusyButton
+          busy={busy}
+          tag="panel:refresh"
+          disabled={disabled}
+          onClick={() =>
+            onChange(() => api.getMedia(media.story_id), { key: "panel:refresh", label: "Обновляю…" })
+          }
+        >
           Обновить
-        </button>
+        </BusyButton>
       </div>
       <p className="muted">
-        Генерирует Claude через коннектор ElevenLabs: после запроса напишите ему «сделай очередь». Цены — оценка на{" "}
+        «Поставить в очередь» в сцене запоминает запрос (цену показывает подсказка при наведении), «Сгенерировать (N кр.)» запускает (через Claude и коннектор ElevenLabs). Точную цену можно измерить в меню «▾». Картинки сцен 1+ берут за образец картинку сцены 0 и свой референс. Цены — оценка на{" "}
         {media.prices_measured_on}, озвучка ≈{media.speech_credits_per_char} кр. за символ. Файлы: {media.media_dir}
       </p>
     </section>

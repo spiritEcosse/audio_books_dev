@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type MediaInfo, type ModelsInfo, type ProfilesInfo, type Story, type StoryDetail, type StorySettings } from "./api";
 import { Chat } from "./Chat";
 import { MediaPanel } from "./MediaPanel";
+import { type MediaBusy, type MediaChange } from "./mediaCost";
 import { Revisions } from "./Revisions";
 import { ModelPicker } from "./ModelPicker";
 import { SceneList } from "./SceneList";
@@ -10,6 +11,8 @@ import { StorySettingsPanel } from "./StorySettingsPanel";
 import "./App.css";
 
 const QUEUE_POLL_MS = 3000;
+
+const GENERIC_BUSY: MediaBusy = { key: "media", label: "Выполняю…" };
 
 function errorMessage(err: unknown): string {
   return typeof err === "string" ? err : String(err);
@@ -24,6 +27,7 @@ export default function App() {
   const [profiles, setProfiles] = useState<ProfilesInfo | null>(null);
   const [media, setMedia] = useState<MediaInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mediaBusy, setMediaBusy] = useState<MediaBusy | null>(null);
 
   const run = useCallback(async (action: () => Promise<void>) => {
     setError(null);
@@ -88,8 +92,10 @@ export default function App() {
     return () => clearInterval(timer);
   }, [hasQueued, detailStoryId]);
 
-  const changeMedia = (action: () => Promise<MediaInfo>) =>
-    void run(async () => setMedia(await action()));
+  const changeMedia: MediaChange = (action, busy = GENERIC_BUSY) => {
+    setMediaBusy(busy);
+    void run(async () => setMedia(await action())).finally(() => setMediaBusy(null));
+  };
 
   const create = (title: string, text: string) =>
     run(async () => {
@@ -147,6 +153,11 @@ export default function App() {
         <StoryForm onCreate={create} />
       </aside>
       <main>
+        {mediaBusy && (
+          <p className="busy-banner" role="status">
+            <span className="spinner" aria-hidden="true" /> {mediaBusy.label}
+          </p>
+        )}
         {error && <p className="error">{error}</p>}
         {detail ? (
           <div className="workspace">
@@ -173,7 +184,8 @@ export default function App() {
                 <MediaPanel
                   media={media}
                   scenes={detail.scenes}
-                  disabled={pendingText !== null}
+                  disabled={pendingText !== null || mediaBusy !== null}
+                  busy={mediaBusy}
                   onChange={changeMedia}
                 />
               )}
@@ -181,7 +193,8 @@ export default function App() {
                 storyId={detail.story.id}
                 scenes={detail.scenes}
                 media={media && media.story_id === detail.story.id ? media : null}
-                disabled={pendingText !== null}
+                disabled={pendingText !== null || mediaBusy !== null}
+                busy={mediaBusy}
                 onMediaChange={changeMedia}
               />
             </div>
