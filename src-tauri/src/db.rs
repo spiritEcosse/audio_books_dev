@@ -89,6 +89,18 @@ CREATE TABLE IF NOT EXISTS scene_references (
     file_path TEXT NOT NULL,
     PRIMARY KEY (story_id, position)
 );
+CREATE TABLE IF NOT EXISTS story_characters (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    story_id  INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    name      TEXT NOT NULL,
+    file_path TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS scene_character_off (
+    story_id     INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    position     INTEGER NOT NULL,
+    character_id INTEGER NOT NULL REFERENCES story_characters(id) ON DELETE CASCADE,
+    PRIMARY KEY (story_id, position, character_id)
+);
 ";
 
 #[derive(Debug, Clone, Serialize)]

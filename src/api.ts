@@ -113,6 +113,21 @@ export interface SceneReference {
   file_path: string;
 }
 
+/** A recurring character: its picture goes to the image model with every scene it is not switched off for. */
+export interface Character {
+  id: number;
+  name: string;
+  file_path: string;
+}
+
+export interface SceneCharacterOff {
+  position: number;
+  character_id: number;
+}
+
+/** Mirrors `characters::MAX_CHARACTERS` in the backend. */
+export const MAX_CHARACTERS = 4;
+
 export interface ImageModel {
   id: string;
   label: string;
@@ -137,6 +152,8 @@ export interface MediaInfo {
   media_dir: string;
   assets: SceneAsset[];
   references: SceneReference[];
+  characters: Character[];
+  character_off: SceneCharacterOff[];
   videos: VideoFile[];
 }
 
@@ -207,6 +224,12 @@ export const api = {
     invoke<MediaInfo>("set_scene_reference", { storyId, position, fileName, bytes }),
   clearSceneReference: (storyId: number, position: number) =>
     invoke<MediaInfo>("clear_scene_reference", { storyId, position }),
+  addCharacter: (storyId: number, name: string, fileName: string, bytes: number[]) =>
+    invoke<MediaInfo>("add_character", { storyId, name, fileName, bytes }),
+  removeCharacter: (storyId: number, characterId: number) =>
+    invoke<MediaInfo>("remove_character", { storyId, characterId }),
+  setSceneCharacter: (storyId: number, position: number, characterId: number, included: boolean) =>
+    invoke<MediaInfo>("set_scene_character", { storyId, position, characterId, included }),
   sendMessage: (id: number, text: string) =>
     invoke<StoryDetail>("send_message", { id, text }),
 };

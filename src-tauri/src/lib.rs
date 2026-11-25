@@ -1,5 +1,6 @@
 mod actions;
 mod chat;
+mod characters;
 mod claude;
 mod db;
 mod error;
@@ -240,6 +241,9 @@ struct MediaInfo {
     media_dir: String,
     assets: Vec<media::SceneAsset>,
     references: Vec<media::SceneReference>,
+    /// Recurring characters of the story and the scenes each one is switched off for.
+    characters: Vec<characters::Character>,
+    character_off: Vec<characters::SceneCharacterOff>,
     /// Finished videos (1080p / 4K) in the story's media folder.
     videos: Vec<video::VideoFile>,
 }
@@ -257,6 +261,8 @@ fn load_media(state: &AppState, conn: &Connection, story_id: i64) -> Result<Medi
         media_dir: media::story_media_dir(&state.workspace, story_id).display().to_string(),
         assets: media::list_assets(conn, story_id)?,
         references: media::list_references(conn, story_id)?,
+        characters: characters::list(conn, story_id)?,
+        character_off: characters::list_off(conn, story_id)?,
         videos: video::existing_videos(&media::story_media_dir(&state.workspace, story_id)),
     })
 }
@@ -657,6 +663,42 @@ fn set_scene_reference(
     load_media(&state, &conn, story_id)
 }
 
+/// Adds a recurring character: its picture goes to the image model with every scene it is not switched off for.
+#[tauri::command]
+fn add_character(
+    state: State<'_, AppState>,
+    story_id: i64,
+    name: String,
+    file_name: String,
+    bytes: Vec<u8>,
+) -> Result<MediaInfo, AppError> {
+    let conn = state.conn()?;
+    characters::add(&conn, &state.workspace, story_id, &name, &file_name, &bytes)?;
+    load_media(&state, &conn, story_id)
+}
+
+#[tauri::command]
+fn remove_character(state: State<'_, AppState>, story_id: i64, character_id: i64) -> Result<MediaInfo, AppError> {
+    let conn = state.conn()?;
+    if let Some(file) = characters::remove(&conn, story_id, character_id)? {
+        let _ = std::fs::remove_file(file);
+    }
+    load_media(&state, &conn, story_id)
+}
+
+#[tauri::command]
+fn set_scene_character(
+    state: State<'_, AppState>,
+    story_id: i64,
+    position: i64,
+    character_id: i64,
+    included: bool,
+) -> Result<MediaInfo, AppError> {
+    let conn = state.conn()?;
+    characters::set_in_scene(&conn, story_id, position, character_id, included)?;
+    load_media(&state, &conn, story_id)
+}
+
 #[tauri::command]
 fn clear_scene_reference(state: State<'_, AppState>, story_id: i64, position: i64) -> Result<MediaInfo, AppError> {
     let conn = state.conn()?;
@@ -773,6 +815,9 @@ pub fn run() {
             generate_image_queue,
             set_scene_reference,
             clear_scene_reference,
+            add_character,
+            remove_character,
+            set_scene_character,
             upscale_images,
             export_video,
             cancel_export

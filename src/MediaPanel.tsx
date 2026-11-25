@@ -1,6 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { api, RESOLUTIONS, type MediaInfo, type Scene } from "./api";
 import { BusyButton } from "./BusyButton";
+import { Characters } from "./Characters";
 import { ExportProgress } from "./ExportProgress";
 import { type MediaBusy, type MediaChange, findAsset, formatCredits, summarize } from "./mediaCost";
 
@@ -44,6 +45,7 @@ export function MediaPanel({ media, scenes, disabled, busy, onChange }: Props) {
           ))}
         </select>
       </label>
+      <Characters media={media} disabled={locked} onChange={onChange} />
       <details className="voices">
         <summary>Голос озвучки: {selectedVoice?.label ?? "—"}</summary>
         <ul>

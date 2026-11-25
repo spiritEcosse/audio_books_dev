@@ -236,7 +236,7 @@ function AssetRow({ kind, scene, scenes, storyId, media, disabled, busy, onChang
   );
 }
 
-async function readBytes(file: File): Promise<number[]> {
+export async function readBytes(file: File): Promise<number[]> {
   return Array.from(new Uint8Array(await file.arrayBuffer()));
 }
 
@@ -275,10 +275,36 @@ function ReferenceRow({ scene, storyId, media, disabled, onChange }: Props) {
   );
 }
 
+/** Which of the story's characters go into this scene's image (all of them unless switched off). */
+function CharacterRow({ scene, storyId, media, disabled, onChange }: Props) {
+  if (media.characters.length === 0) return null;
+  const isOff = (characterId: number) =>
+    media.character_off.some((off) => off.position === scene.position && off.character_id === characterId);
+  return (
+    <div className="asset scene-characters">
+      <span>Персонажи в картинке:</span>
+      {media.characters.map((character) => (
+        <label key={character.id}>
+          <input
+            type="checkbox"
+            checked={!isOff(character.id)}
+            disabled={disabled}
+            onChange={(e) =>
+              onChange(() => api.setSceneCharacter(storyId, scene.position, character.id, e.target.checked))
+            }
+          />{" "}
+          {character.name}
+        </label>
+      ))}
+    </div>
+  );
+}
+
 export function SceneMedia(props: Props) {
   return (
     <div className="scene-media">
       <AssetRow {...props} kind="image" />
+      <CharacterRow {...props} />
       <ReferenceRow {...props} />
       <AssetRow {...props} kind="audio" />
     </div>

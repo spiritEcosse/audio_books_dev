@@ -1,6 +1,7 @@
 //! Image generation driven from the app: prices and generates the queued scene images through Claude's
-//! ElevenLabs connector (headless `claude -p`). Scene 0 is the style anchor: its finished image, and
-//! the scene's own custom reference, are uploaded and wired into every generation as references. Claude
+//! ElevenLabs connector (headless `claude -p`). The references of a scene are uploaded and wired into its
+//! generation: the pictures of the story's characters (those not switched off for the scene) or, when the
+//! story has none, the scene 0 image as a style anchor; then the scene's own custom reference. Claude
 //! only calls the ElevenLabs tools; the app sends the files itself (a headless run has no shell).
 
 use std::path::{Path, PathBuf};
@@ -8,6 +9,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::{Value, json};
 
+use crate::characters;
 use crate::claude;
 use crate::error::AppError;
 use crate::media::{self, KIND_IMAGE};
@@ -42,7 +44,8 @@ pub struct QueuedImage {
     pub prompt: String,
     pub model_id: String,
     pub estimate_credits: Option<f64>,
-    /// Files to wire in as references: the scene 0 anchor (for other scenes) and the scene's own custom one.
+    /// Files to wire in as references: the characters of the scene, else the scene 0 anchor (for other scenes),
+    /// and the scene's own custom one.
     pub references: Vec<PathBuf>,
 }
 
@@ -58,25 +61,28 @@ fn anchor_image(conn: &Connection, story_id: i64) -> Result<Option<PathBuf>, App
 
 /// Queued images that generation has not started for yet, in scene order, with their references.
 pub fn queued_images(conn: &Connection, story_id: i64) -> Result<Vec<QueuedImage>, AppError> {
-    let anchor = anchor_image(conn, story_id)?;
+    // With characters, their pictures carry the look of the story; the scene 0 anchor would only pull every scene
+    // towards the composition and style of that one picture.
+    let anchor = if characters::list(conn, story_id)?.is_empty() { anchor_image(conn, story_id)? } else { None };
     let custom = media::list_references(conn, story_id)?;
-    Ok(media_queue::queued_rows(conn, story_id, KIND_IMAGE)?
+    media_queue::queued_rows(conn, story_id, KIND_IMAGE)?
         .into_iter()
         .map(|row| {
             let mut references: Vec<PathBuf> = Vec::new();
             if row.position != ANCHOR_POSITION {
                 references.extend(anchor.clone());
             }
+            references.extend(characters::files_for_scene(conn, story_id, row.position)?);
             references.extend(custom.iter().filter(|r| r.position == row.position).map(|r| PathBuf::from(&r.file_path)));
-            QueuedImage {
+            Ok(QueuedImage {
                 position: row.position,
                 prompt: row.source,
                 model_id: row.model_id,
                 estimate_credits: row.estimate_credits,
                 references,
-            }
+            })
         })
-        .collect())
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -276,6 +282,45 @@ mod tests {
         assert!(items[1].references.is_empty());
     }
 
+    fn add_character_row(conn: &Connection, story: i64, name: &str, path: &str) -> i64 {
+        conn.execute("INSERT INTO story_characters (story_id, name, file_path) VALUES (?1, ?2, ?3)", rusqlite::params![story, name, path])
+            .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn characters_replace_the_anchor_and_come_before_the_scenes_own_reference() {
+        let (conn, story) = setup();
+        for position in 0..3 {
+            media::request_asset(&conn, story, position, KIND_IMAGE).unwrap();
+        }
+        conn.execute("UPDATE scene_assets SET file_path = '/m/scene-0-image-v1.webp' WHERE position = 0", []).unwrap();
+        conn.execute("INSERT INTO scene_references (story_id, position, file_path) VALUES (?1, 2, '/r/owl.png')", [story]).unwrap();
+        add_character_row(&conn, story, "Tembo", "/c/tembo.png");
+
+        let items = queued_images(&conn, story).unwrap();
+
+        assert_eq!(items[0].references, [PathBuf::from("/c/tembo.png")], "scene 0 gets the hero too unless it is switched off");
+        assert_eq!(items[1].references, [PathBuf::from("/c/tembo.png")], "no scene 0 anchor once there are characters");
+        assert_eq!(items[2].references, [PathBuf::from("/c/tembo.png"), PathBuf::from("/r/owl.png")]);
+    }
+
+    #[test]
+    fn a_character_switched_off_for_a_scene_is_not_sent_for_it() {
+        let (conn, story) = setup();
+        for position in 0..2 {
+            media::request_asset(&conn, story, position, KIND_IMAGE).unwrap();
+        }
+        let hero = add_character_row(&conn, story, "Tembo", "/c/tembo.png");
+        add_character_row(&conn, story, "Owl", "/c/owl.png");
+        characters::set_in_scene(&conn, story, 0, hero, false).unwrap();
+
+        let items = queued_images(&conn, story).unwrap();
+
+        assert_eq!(items[0].references, [PathBuf::from("/c/owl.png")]);
+        assert_eq!(items[1].references, [PathBuf::from("/c/tembo.png"), PathBuf::from("/c/owl.png")]);
+    }
+
     #[test]
     fn scene_zero_never_references_itself() {
         let (conn, story) = setup();
@@ -304,6 +349,13 @@ mod tests {
     }
 
     #[test]
+    fn a_single_image_with_a_reference_gets_a_long_polling_budget() {
+        // finalize the reference + generate + status polls while a ~1 min generation runs
+        let turns = media_queue::GENERATE_BASE_TURNS + TURNS_PER_ITEM * 2;
+        assert!(turns >= 40, "{turns} turns ended a real run with the image generated but not downloaded");
+    }
+
+    #[test]
     fn prompts_use_the_image_tools() {
         assert!(claude::is_known_model(MEDIA_MODEL));
         for prompt in [ESTIMATE_SYSTEM, GENERATE_SYSTEM] {
@@ -313,10 +365,3 @@ mod tests {
         assert!(GENERATE_SYSTEM.contains("creative_finalize_asset_upload"));
     }
 }
-    #[test]
-    fn a_single_image_with_a_reference_gets_a_long_polling_budget() {
-        // finalize the reference + generate + status polls while a ~1 min generation runs
-        let turns = media_queue::GENERATE_BASE_TURNS + TURNS_PER_ITEM * 2;
-        assert!(turns >= 40, "{turns} turns ended a real run with the image generated but not downloaded");
-    }
-
