@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type ModelsInfo, type ProfilesInfo, type Story, type StoryDetail, type StorySettings } from "./api";
+import { api, type MediaInfo, type ModelsInfo, type ProfilesInfo, type Story, type StoryDetail, type StorySettings } from "./api";
 import { Chat } from "./Chat";
+import { MediaPanel } from "./MediaPanel";
 import { Revisions } from "./Revisions";
 import { ModelPicker } from "./ModelPicker";
 import { SceneList } from "./SceneList";
 import { StoryForm } from "./StoryForm";
 import { StorySettingsPanel } from "./StorySettingsPanel";
 import "./App.css";
+
+const QUEUE_POLL_MS = 3000;
 
 function errorMessage(err: unknown): string {
   return typeof err === "string" ? err : String(err);
@@ -19,6 +22,7 @@ export default function App() {
   const [pendingText, setPendingText] = useState<string | null>(null);
   const [models, setModels] = useState<ModelsInfo | null>(null);
   const [profiles, setProfiles] = useState<ProfilesInfo | null>(null);
+  const [media, setMedia] = useState<MediaInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const run = useCallback(async (action: () => Promise<void>) => {
@@ -64,6 +68,28 @@ export default function App() {
     if (selectedId === null) return;
     void run(async () => setDetail(await api.getStory(selectedId)));
   }, [selectedId, run]);
+
+  const detailStoryId = detail?.story.id ?? null;
+  useEffect(() => {
+    if (detailStoryId === null) {
+      setMedia(null);
+      return;
+    }
+    void run(async () => setMedia(await api.getMedia(detailStoryId)));
+  }, [detail, detailStoryId, run]);
+
+  // Claude fulfils queued requests outside the app, so keep checking while any are pending.
+  const hasQueued = media?.assets.some((asset) => asset.status === "requested") ?? false;
+  useEffect(() => {
+    if (!hasQueued || detailStoryId === null) return;
+    const timer = setInterval(() => {
+      api.getMedia(detailStoryId).then(setMedia).catch((err) => setError(errorMessage(err)));
+    }, QUEUE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [hasQueued, detailStoryId]);
+
+  const changeMedia = (action: () => Promise<MediaInfo>) =>
+    void run(async () => setMedia(await action()));
 
   const create = (title: string, text: string) =>
     run(async () => {
@@ -143,7 +169,21 @@ export default function App() {
                 disabled={pendingText !== null}
                 onRestore={(id) => void applyDetail(() => api.restoreRevision(id))}
               />
-              <SceneList scenes={detail.scenes} />
+              {media && media.story_id === detail.story.id && (
+                <MediaPanel
+                  media={media}
+                  scenes={detail.scenes}
+                  disabled={pendingText !== null}
+                  onChange={changeMedia}
+                />
+              )}
+              <SceneList
+                storyId={detail.story.id}
+                scenes={detail.scenes}
+                media={media && media.story_id === detail.story.id ? media : null}
+                disabled={pendingText !== null}
+                onMediaChange={changeMedia}
+              />
             </div>
             <Chat
               messages={detail.messages}

@@ -3,6 +3,7 @@ mod chat;
 mod claude;
 mod db;
 mod error;
+mod media;
 mod profiles;
 mod stats;
 
@@ -219,6 +220,101 @@ fn restore_revision(state: State<'_, AppState>, revision_id: i64) -> Result<Stor
     load_detail(&conn, story_id)
 }
 
+#[derive(serde::Serialize)]
+struct MediaInfo {
+    story_id: i64,
+    image_model: String,
+    image_models: &'static [media::ImageModel],
+    voice_id: String,
+    voices: &'static [media::Voice],
+    speech_credits_per_char: f64,
+    prices_measured_on: &'static str,
+    media_dir: String,
+    assets: Vec<media::SceneAsset>,
+    references: Vec<media::SceneReference>,
+}
+
+fn load_media(state: &AppState, conn: &Connection, story_id: i64) -> Result<MediaInfo, AppError> {
+    db::get_story(conn, story_id)?;
+    Ok(MediaInfo {
+        story_id,
+        image_model: media::image_model(conn, story_id)?,
+        image_models: &media::IMAGE_MODELS,
+        voice_id: media::voice_id(conn, story_id)?,
+        voices: &media::VOICES,
+        speech_credits_per_char: media::SPEECH_CREDITS_PER_CHAR,
+        prices_measured_on: media::PRICES_MEASURED_ON,
+        media_dir: media::story_media_dir(&state.workspace, story_id).display().to_string(),
+        assets: media::list_assets(conn, story_id)?,
+        references: media::list_references(conn, story_id)?,
+    })
+}
+
+#[tauri::command]
+fn get_media(state: State<'_, AppState>, story_id: i64) -> Result<MediaInfo, AppError> {
+    load_media(&state, &*state.conn()?, story_id)
+}
+
+#[tauri::command]
+fn set_image_model(state: State<'_, AppState>, story_id: i64, model_id: String) -> Result<MediaInfo, AppError> {
+    let conn = state.conn()?;
+    media::set_image_model(&conn, story_id, &model_id)?;
+    load_media(&state, &conn, story_id)
+}
+
+#[tauri::command]
+fn set_voice(state: State<'_, AppState>, story_id: i64, voice_id: String) -> Result<MediaInfo, AppError> {
+    let conn = state.conn()?;
+    media::set_voice(&conn, story_id, &voice_id)?;
+    load_media(&state, &conn, story_id)
+}
+
+#[tauri::command]
+fn request_asset(
+    state: State<'_, AppState>,
+    story_id: i64,
+    position: i64,
+    kind: String,
+) -> Result<MediaInfo, AppError> {
+    let conn = state.conn()?;
+    media::request_asset(&conn, story_id, position, &kind)?;
+    load_media(&state, &conn, story_id)
+}
+
+#[tauri::command]
+fn request_missing_assets(state: State<'_, AppState>, story_id: i64) -> Result<MediaInfo, AppError> {
+    let conn = state.conn()?;
+    media::request_missing(&conn, story_id)?;
+    load_media(&state, &conn, story_id)
+}
+
+#[tauri::command]
+fn set_scene_reference(
+    state: State<'_, AppState>,
+    story_id: i64,
+    position: i64,
+    file_name: String,
+    bytes: Vec<u8>,
+) -> Result<MediaInfo, AppError> {
+    let path = media::save_reference_file(&state.workspace, story_id, position, &file_name, &bytes)?;
+    let new_path = path.display().to_string();
+    let conn = state.conn()?;
+    let previous = media::set_reference(&conn, story_id, position, &new_path)?;
+    if let Some(previous) = previous.filter(|old| *old != new_path) {
+        let _ = std::fs::remove_file(previous);
+    }
+    load_media(&state, &conn, story_id)
+}
+
+#[tauri::command]
+fn clear_scene_reference(state: State<'_, AppState>, story_id: i64, position: i64) -> Result<MediaInfo, AppError> {
+    let conn = state.conn()?;
+    if let Some(previous) = media::clear_reference(&conn, story_id, position)? {
+        let _ = std::fs::remove_file(previous);
+    }
+    load_media(&state, &conn, story_id)
+}
+
 /// One chat turn: saves the user message, asks Claude (resuming its session), applies any
 /// scene changes and saves the answer. On failure the user message stays saved.
 #[tauri::command]
@@ -312,7 +408,14 @@ pub fn run() {
             accept_proposal,
             reject_proposal,
             list_revisions,
-            restore_revision
+            restore_revision,
+            get_media,
+            set_image_model,
+            set_voice,
+            request_asset,
+            request_missing_assets,
+            set_scene_reference,
+            clear_scene_reference
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

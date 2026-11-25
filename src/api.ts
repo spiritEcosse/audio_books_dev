@@ -67,6 +67,53 @@ export interface StoryDetail {
   stats: StoryStats;
 }
 
+export type AssetKind = "image" | "audio";
+
+export interface SceneAsset {
+  position: number;
+  kind: AssetKind;
+  status: "requested" | "ready" | "failed";
+  file_path: string | null;
+  stale: boolean;
+  model_id: string;
+  voice_id: string | null;
+  credits: number | null;
+  estimate_credits: number | null;
+  in_progress: boolean;
+  error: string | null;
+}
+
+export interface SceneReference {
+  position: number;
+  file_path: string;
+}
+
+export interface ImageModel {
+  id: string;
+  label: string;
+  credits: number;
+}
+
+export interface Voice {
+  id: string;
+  label: string;
+  description: string;
+  preview_url: string;
+}
+
+export interface MediaInfo {
+  story_id: number;
+  image_model: string;
+  image_models: ImageModel[];
+  voice_id: string;
+  voices: Voice[];
+  speech_credits_per_char: number;
+  prices_measured_on: string;
+  media_dir: string;
+  assets: SceneAsset[];
+  references: SceneReference[];
+}
+
 export interface ModelOption {
   id: string;
   label: string;
@@ -100,6 +147,19 @@ export const api = {
   listRevisions: (storyId: number) => invoke<Revision[]>("list_revisions", { storyId }),
   restoreRevision: (revisionId: number) =>
     invoke<StoryDetail>("restore_revision", { revisionId }),
+  getMedia: (storyId: number) => invoke<MediaInfo>("get_media", { storyId }),
+  setImageModel: (storyId: number, modelId: string) =>
+    invoke<MediaInfo>("set_image_model", { storyId, modelId }),
+  setVoice: (storyId: number, voiceId: string) =>
+    invoke<MediaInfo>("set_voice", { storyId, voiceId }),
+  requestAsset: (storyId: number, position: number, kind: AssetKind) =>
+    invoke<MediaInfo>("request_asset", { storyId, position, kind }),
+  requestMissingAssets: (storyId: number) =>
+    invoke<MediaInfo>("request_missing_assets", { storyId }),
+  setSceneReference: (storyId: number, position: number, fileName: string, bytes: number[]) =>
+    invoke<MediaInfo>("set_scene_reference", { storyId, position, fileName, bytes }),
+  clearSceneReference: (storyId: number, position: number) =>
+    invoke<MediaInfo>("clear_scene_reference", { storyId, position }),
   sendMessage: (id: number, text: string) =>
     invoke<StoryDetail>("send_message", { id, text }),
 };
