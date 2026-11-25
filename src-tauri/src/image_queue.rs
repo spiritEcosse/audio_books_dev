@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use crate::claude;
 use crate::error::AppError;
-use crate::media::{self, KIND_IMAGE, STATUS_READY};
+use crate::media::{self, KIND_IMAGE};
 use crate::media_queue::{self, CONNECTOR_TOOLS, ItemResult, MEDIA_MODEL};
 
 const ESTIMATE_BASE_TURNS: u32 = 6;
@@ -47,17 +47,19 @@ pub struct QueuedImage {
     pub references: Vec<PathBuf>,
 }
 
-fn ready_anchor(conn: &Connection, story_id: i64) -> Result<Option<PathBuf>, AppError> {
+/// The scene 0 image to use as the style reference. A scene 0 that is queued again still has its previous file
+/// (it stays until the new one replaces it), and that file is the style the user approved, so the status does not matter.
+fn anchor_image(conn: &Connection, story_id: i64) -> Result<Option<PathBuf>, AppError> {
     Ok(media::list_assets(conn, story_id)?
         .into_iter()
-        .find(|a| a.position == ANCHOR_POSITION && a.kind == KIND_IMAGE && a.status == STATUS_READY)
+        .find(|a| a.position == ANCHOR_POSITION && a.kind == KIND_IMAGE)
         .and_then(|a| a.file_path)
         .map(PathBuf::from))
 }
 
 /// Queued images that generation has not started for yet, in scene order, with their references.
 pub fn queued_images(conn: &Connection, story_id: i64) -> Result<Vec<QueuedImage>, AppError> {
-    let anchor = ready_anchor(conn, story_id)?;
+    let anchor = anchor_image(conn, story_id)?;
     let custom = media::list_references(conn, story_id)?;
     Ok(media_queue::queued_rows(conn, story_id, KIND_IMAGE)?
         .into_iter()
@@ -248,6 +250,31 @@ mod tests {
             items[1].references,
             [PathBuf::from("/m/scene-0-image-v1.webp"), PathBuf::from("/r/owl.png")]
         );
+    }
+
+    #[test]
+    fn a_requeued_scene_zero_still_serves_as_the_anchor_with_its_old_file() {
+        let (conn, story) = setup();
+        for position in 0..2 {
+            media::request_asset(&conn, story, position, KIND_IMAGE).unwrap();
+        }
+        conn.execute("UPDATE scene_assets SET file_path = '/m/scene-0-image-v1.webp' WHERE position = 0", []).unwrap();
+
+        let items = queued_images(&conn, story).unwrap();
+
+        assert_eq!(items.len(), 2, "both scenes are still queued");
+        assert!(items[0].references.is_empty(), "scene 0 never references itself");
+        assert_eq!(items[1].references, [PathBuf::from("/m/scene-0-image-v1.webp")]);
+    }
+
+    #[test]
+    fn without_any_scene_zero_file_other_scenes_get_no_anchor() {
+        let (conn, story) = setup();
+        for position in 0..2 {
+            media::request_asset(&conn, story, position, KIND_IMAGE).unwrap();
+        }
+        let items = queued_images(&conn, story).unwrap();
+        assert!(items[1].references.is_empty());
     }
 
     #[test]
