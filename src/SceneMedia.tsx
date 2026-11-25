@@ -2,7 +2,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { useState } from "react";
 import { api, type AssetKind, type MediaInfo, type Scene, type SceneAsset } from "./api";
 import { BusyButton } from "./BusyButton";
-import { type MediaBusy, type MediaChange, findAsset, formatCredits, sceneCredits } from "./mediaCost";
+import { type MediaBusy, type MediaChange, findAsset, formatCredits, rowLocked, sceneCredits } from "./mediaCost";
 import { RANGE_OPTIONS, type RangeMode, costTip, rangeBounds, rangeCost } from "./rangeRun";
 
 interface Props {
@@ -12,8 +12,8 @@ interface Props {
   /** All scenes of the story: a run can cover a range of them. */
   scenes: readonly Scene[];
   disabled: boolean;
-  /** The media action running right now (any scene), if any. */
-  busy: MediaBusy | null;
+  /** The media actions running right now (any scene). */
+  busy: readonly MediaBusy[];
   onChange: MediaChange;
   /** Starts a run over this scene and the following / preceding ones (see rangeRun). */
   onRange: (kind: AssetKind, mode: RangeMode, position: number) => void;
@@ -86,6 +86,8 @@ function mainAction(
 function AssetRow({ kind, scene, scenes, storyId, media, disabled, busy, onChange, onRange }: Props & { kind: AssetKind }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const rowKey = `${kind}:${scene.position}`;
+  const locked = disabled || rowLocked(busy, rowKey);
+  const anyBusy = busy.length > 0;
   const asset = findAsset(media, scene.position, kind);
   const action = mainAction(asset, kind, storyId, scene, media);
   const queuedFresh = asset?.status === "requested" && !asset.stale && !asset.in_progress;
@@ -111,7 +113,7 @@ function AssetRow({ kind, scene, scenes, storyId, media, disabled, busy, onChang
           <BusyButton
             busy={busy}
             tag={rowKey}
-            disabled={disabled || action.run === null}
+            disabled={locked || action.run === null}
             title={mainTip}
             onClick={() => action.run && onChange(action.run, { key: rowKey, label: action.busyLabel })}
           >
@@ -122,7 +124,7 @@ function AssetRow({ kind, scene, scenes, storyId, media, disabled, busy, onChang
             className="run-split-toggle"
             aria-label="Варианты запуска"
             aria-expanded={menuOpen}
-            disabled={disabled}
+            disabled={locked}
             title="Запустить несколько сцен"
             onClick={() => setMenuOpen((open) => !open)}
           >
@@ -130,19 +132,23 @@ function AssetRow({ kind, scene, scenes, storyId, media, disabled, busy, onChang
           </button>
           {menuOpen && (
             <div className="run-menu" role="menu">
-              {queuedFresh && (
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onChange(rowCalls(kind, storyId, scene.position).estimate, { key: rowKey, label: PRICE_BUSY });
-                  }}
-                >
-                  <strong>Измерить точную цену</strong>
-                  <span>Бесплатно, около 15 секунд</span>
-                </button>
-              )}
+              <button
+                type="button"
+                role="menuitem"
+                disabled={locked || asset?.in_progress === true}
+                onClick={() => {
+                  setMenuOpen(false);
+                  const calls = rowCalls(kind, storyId, scene.position);
+                  const measure = queuedFresh ? calls.estimate : () => calls.request().then(calls.estimate);
+                  onChange(measure, { key: rowKey, label: PRICE_BUSY });
+                }}
+              >
+                <strong>Получить точную цену из ElevenLabs</strong>
+                <span>
+                  {kind === "audio" ? "Озвучка" : "Картинка"}, эта сцена. Бесплатно, около 15 секунд
+                  {queuedFresh ? "" : "; сначала поставит в очередь"}
+                </span>
+              </button>
               {RANGE_OPTIONS.map((option) => {
                 const cost = costOf(option.mode);
                 return (
@@ -150,7 +156,7 @@ function AssetRow({ kind, scene, scenes, storyId, media, disabled, busy, onChang
                     key={option.mode}
                     type="button"
                     role="menuitem"
-                    disabled={cost.count === 0}
+                    disabled={cost.count === 0 || anyBusy}
                     title={costTip(cost)}
                     onClick={() => {
                       setMenuOpen(false);

@@ -6,12 +6,13 @@ interface Props {
   media: MediaInfo;
   scenes: readonly Scene[];
   disabled: boolean;
-  busy: MediaBusy | null;
+  busy: readonly MediaBusy[];
   onChange: MediaChange;
 }
 
 export function MediaPanel({ media, scenes, disabled, busy, onChange }: Props) {
   const { missing, queued, queuedExact } = summarize(media, scenes);
+  const locked = disabled || busy.length > 0;
   const unpriced = media.assets.filter(
     (a) => a.status === "requested" && !a.in_progress && a.estimate_credits == null,
   );
@@ -24,7 +25,7 @@ export function MediaPanel({ media, scenes, disabled, busy, onChange }: Props) {
         Модель картинок
         <select
           value={media.image_model}
-          disabled={disabled}
+          disabled={locked}
           onChange={(e) => onChange(() => api.setImageModel(media.story_id, e.target.value))}
         >
           {media.image_models.map((model) => (
@@ -44,7 +45,7 @@ export function MediaPanel({ media, scenes, disabled, busy, onChange }: Props) {
                   type="radio"
                   name="voice"
                   checked={voice.id === media.voice_id}
-                  disabled={disabled}
+                  disabled={locked}
                   onChange={() => onChange(() => api.setVoice(media.story_id, voice.id))}
                 />
                 <strong>{voice.label}</strong>
@@ -65,7 +66,7 @@ export function MediaPanel({ media, scenes, disabled, busy, onChange }: Props) {
         <BusyButton
           busy={busy}
           tag="panel:request"
-          disabled={disabled || missing.items === 0}
+          disabled={locked || missing.items === 0}
           onClick={() =>
             onChange(() => api.requestMissingAssets(media.story_id), {
               key: "panel:request",
@@ -78,7 +79,7 @@ export function MediaPanel({ media, scenes, disabled, busy, onChange }: Props) {
         <BusyButton
           busy={busy}
           tag="panel:cancel"
-          disabled={disabled || queued.items === 0}
+          disabled={locked || queued.items === 0}
           onClick={() =>
             onChange(() => api.cancelQueue(media.story_id), { key: "panel:cancel", label: "Очищаю очередь…" })
           }
@@ -88,7 +89,7 @@ export function MediaPanel({ media, scenes, disabled, busy, onChange }: Props) {
         <BusyButton
           busy={busy}
           tag="panel:estimate"
-          disabled={disabled || unpriced.length === 0}
+          disabled={locked || unpriced.length === 0}
           onClick={() => onChange(estimateAll, { key: "panel:estimate", label: "Измеряю цены…" })}
         >
           Измерить точные цены{unpriced.length > 0 ? ` (${unpriced.length})` : ""}
@@ -96,7 +97,7 @@ export function MediaPanel({ media, scenes, disabled, busy, onChange }: Props) {
         <BusyButton
           busy={busy}
           tag="panel:refresh"
-          disabled={disabled}
+          disabled={locked}
           onClick={() =>
             onChange(() => api.getMedia(media.story_id), { key: "panel:refresh", label: "Обновляю…" })
           }

@@ -10,6 +10,16 @@ export interface MediaBusy {
   readonly label: string;
 }
 
+/** Operations that touch many rows (range runs, the panel, anything without its own row) lock the whole media UI. */
+export function isGlobalOp(key: string): boolean {
+  return !/^(image|audio):\d+$/.test(key);
+}
+
+/** A row stays usable while other rows run; it locks for its own operation or a global one. */
+export function rowLocked(ops: readonly MediaBusy[], rowKey: string): boolean {
+  return ops.some((op) => op.key === rowKey || isGlobalOp(op.key));
+}
+
 export type MediaChange = (action: () => Promise<MediaInfo>, busy?: MediaBusy) => void;
 
 export function findAsset(media: MediaInfo, position: number, kind: AssetKind): SceneAsset | undefined {

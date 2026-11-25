@@ -27,7 +27,7 @@ export default function App() {
   const [profiles, setProfiles] = useState<ProfilesInfo | null>(null);
   const [media, setMedia] = useState<MediaInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [mediaBusy, setMediaBusy] = useState<MediaBusy | null>(null);
+  const [mediaOps, setMediaOps] = useState<readonly MediaBusy[]>([]);
 
   const run = useCallback(async (action: () => Promise<void>) => {
     setError(null);
@@ -93,8 +93,10 @@ export default function App() {
   }, [hasQueued, detailStoryId]);
 
   const changeMedia: MediaChange = (action, busy = GENERIC_BUSY) => {
-    setMediaBusy(busy);
-    void run(async () => setMedia(await action())).finally(() => setMediaBusy(null));
+    setMediaOps((ops) => [...ops, busy]);
+    void run(async () => setMedia(await action())).finally(() =>
+      setMediaOps((ops) => ops.filter((op) => op !== busy)),
+    );
   };
 
   const create = (title: string, text: string) =>
@@ -153,11 +155,11 @@ export default function App() {
         <StoryForm onCreate={create} />
       </aside>
       <main>
-        {mediaBusy && (
-          <p className="busy-banner" role="status">
-            <span className="spinner" aria-hidden="true" /> {mediaBusy.label}
+        {mediaOps.map((op) => (
+          <p key={op.key} className="busy-banner" role="status">
+            <span className="spinner" aria-hidden="true" /> {op.label}
           </p>
-        )}
+        ))}
         {error && <p className="error">{error}</p>}
         {detail ? (
           <div className="workspace">
@@ -184,8 +186,8 @@ export default function App() {
                 <MediaPanel
                   media={media}
                   scenes={detail.scenes}
-                  disabled={pendingText !== null || mediaBusy !== null}
-                  busy={mediaBusy}
+                  disabled={pendingText !== null}
+                  busy={mediaOps}
                   onChange={changeMedia}
                 />
               )}
@@ -193,8 +195,8 @@ export default function App() {
                 storyId={detail.story.id}
                 scenes={detail.scenes}
                 media={media && media.story_id === detail.story.id ? media : null}
-                disabled={pendingText !== null || mediaBusy !== null}
-                busy={mediaBusy}
+                disabled={pendingText !== null}
+                busy={mediaOps}
                 onMediaChange={changeMedia}
               />
             </div>

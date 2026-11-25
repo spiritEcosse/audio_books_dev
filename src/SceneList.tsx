@@ -10,7 +10,7 @@ interface Props {
   scenes: readonly Scene[];
   media: MediaInfo | null;
   disabled: boolean;
-  busy: MediaBusy | null;
+  busy: readonly MediaBusy[];
   onMediaChange: MediaChange;
 }
 
@@ -102,7 +102,7 @@ export function SceneList({ storyId, scenes, media, disabled, busy, onMediaChang
               {planCost.exact ? "" : "≈"}
               {formatCredits(planCost.credits)} кр.
             </span>
-            <BusyButton busy={busy} tag={RANGE_KEY} disabled={disabled} onClick={runPlan}>
+            <BusyButton busy={busy} tag={RANGE_KEY} disabled={disabled || busy.length > 0} onClick={runPlan}>
               Сгенерировать
             </BusyButton>
             <button onClick={() => setPlan(null)}>Отмена</button>
