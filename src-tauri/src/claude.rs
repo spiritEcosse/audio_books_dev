@@ -53,18 +53,24 @@ fn resolve_claude() -> Result<PathBuf, AppError> {
     if let Ok(path) = std::env::var("CLAUDE_BIN") {
         return Ok(PathBuf::from(path));
     }
+    find_in_login_shell("claude")?
+        .ok_or_else(|| AppError::new("`claude` not found. Install Claude Code or set CLAUDE_BIN"))
+}
+
+/// Looks a command up through the login shell (a Finder-launched app has a minimal PATH).
+/// `name` is only ever a fixed program name chosen in code.
+pub fn find_in_login_shell(name: &str) -> Result<Option<PathBuf>, AppError> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| FALLBACK_SHELL.into());
     let output = Command::new(shell)
-        .args(["-l", "-i", "-c", "command -v claude"])
+        .args(["-l", "-i", "-c", &format!("command -v {name}")])
         .output()
         .map_err(|e| AppError::new(format!("cannot run login shell: {e}")))?;
-    String::from_utf8_lossy(&output.stdout)
+    Ok(String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::trim)
         .rev()
         .find(|line| line.starts_with('/'))
-        .map(PathBuf::from)
-        .ok_or_else(|| AppError::new("`claude` not found. Install Claude Code or set CLAUDE_BIN"))
+        .map(PathBuf::from))
 }
 
 /// Runs one headless Claude Code turn (`claude -p`), optionally continuing a saved session.

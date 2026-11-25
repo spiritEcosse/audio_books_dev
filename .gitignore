@@ -25,3 +25,7 @@ dist-ssr
 
 .env
 .DS_Store
+
+# Upscayl CLI and model are fetched by scripts/fetch-upscayl.sh
+src-tauri/resources/upscayl/*
+!src-tauri/resources/upscayl/.gitkeep

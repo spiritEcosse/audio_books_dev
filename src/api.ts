@@ -69,6 +69,30 @@ export interface StoryDetail {
 
 export type AssetKind = "image" | "audio";
 
+export const RESOLUTIONS = ["1080p", "4k"] as const;
+export type Resolution = (typeof RESOLUTIONS)[number];
+
+/** An enlarged copy of a scene image that exists on disk. */
+export interface UpscaledFile {
+  label: Resolution;
+  file_path: string;
+}
+
+/** Sent as the `export-progress` event while a video export runs. */
+export interface ExportProgress {
+  story_id: number;
+  percent: number;
+  stage: "clip" | "join";
+  scene: number;
+  scenes: number;
+}
+
+/** A finished exported video in the story's media folder. */
+export interface VideoFile {
+  label: Resolution;
+  file_path: string;
+}
+
 export interface SceneAsset {
   position: number;
   kind: AssetKind;
@@ -81,6 +105,7 @@ export interface SceneAsset {
   estimate_credits: number | null;
   in_progress: boolean;
   error: string | null;
+  upscaled: UpscaledFile[];
 }
 
 export interface SceneReference {
@@ -112,6 +137,7 @@ export interface MediaInfo {
   media_dir: string;
   assets: SceneAsset[];
   references: SceneReference[];
+  videos: VideoFile[];
 }
 
 export interface ModelOption {
@@ -170,6 +196,12 @@ export const api = {
     invoke<MediaInfo>("estimate_image_queue", { storyId, from: from ?? null, to: to ?? null }),
   generateImageQueue: (storyId: number, from?: number, to?: number) =>
     invoke<MediaInfo>("generate_image_queue", { storyId, from: from ?? null, to: to ?? null }),
+  /** Upscayl + ffmpeg: writes 1080p / 4K copies next to the finished image(s); one scene, or all when no position. */
+  upscaleImages: (storyId: number, resolution: Resolution, position?: number) =>
+    invoke<MediaInfo>("upscale_images", { storyId, resolution, position: position ?? null }),
+  /** Joins all scenes (zoom/pan clip + narration, fades) into one video. Long: minutes to tens of minutes. */
+  exportVideo: (storyId: number, resolution: Resolution) =>
+    invoke<MediaInfo>("export_video", { storyId, resolution }),
   setSceneReference: (storyId: number, position: number, fileName: string, bytes: number[]) =>
     invoke<MediaInfo>("set_scene_reference", { storyId, position, fileName, bytes }),
   clearSceneReference: (storyId: number, position: number) =>

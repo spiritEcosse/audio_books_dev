@@ -1,6 +1,6 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useState } from "react";
-import { api, type AssetKind, type MediaInfo, type Scene, type SceneAsset } from "./api";
+import { api, RESOLUTIONS, type AssetKind, type MediaInfo, type Scene, type SceneAsset } from "./api";
 import { BusyButton } from "./BusyButton";
 import { type MediaBusy, type MediaChange, findAsset, formatCredits, rowLocked, sceneCredits } from "./mediaCost";
 import { RANGE_OPTIONS, type RangeMode, costTip, rangeBounds, rangeCost } from "./rangeRun";
@@ -37,6 +37,54 @@ function Preview({ kind, path }: { kind: AssetKind; path: string }) {
     <img className="scene-image" src={src} alt="Иллюстрация сцены" />
   ) : (
     <audio className="scene-audio" controls src={src} />
+  );
+}
+
+const UPSCALE_BUSY_PREFIX = "Улучшаю";
+
+/** Free local enlargement of a finished image to the video size (Upscayl, then ffmpeg). */
+function UpscaleRow({ asset, storyId, position, rowKey, locked, busy, onChange }: {
+  asset: SceneAsset;
+  storyId: number;
+  position: number;
+  rowKey: string;
+  locked: boolean;
+  busy: readonly MediaBusy[];
+  onChange: MediaChange;
+}) {
+  const running = busy.find((op) => op.key === rowKey && op.label.startsWith(UPSCALE_BUSY_PREFIX));
+  return (
+    <div className="upscale">
+      <span className="muted">Для видео:</span>
+      {RESOLUTIONS.map((resolution) => {
+        const done = asset.upscaled.some((version) => version.label === resolution);
+        return (
+          <button
+            key={resolution}
+            type="button"
+            disabled={locked || done}
+            title={
+              done
+                ? "Готово: файл лежит рядом с картинкой"
+                : "Увеличивает через Upscayl и ffmpeg до точного размера. Бесплатно, около 25 секунд"
+            }
+            onClick={() =>
+              onChange(() => api.upscaleImages(storyId, resolution, position), {
+                key: rowKey,
+                label: `${UPSCALE_BUSY_PREFIX} до ${resolution}… около 25 секунд`,
+              })
+            }
+          >
+            {done ? `${resolution} ✓` : `Улучшить до ${resolution}`}
+          </button>
+        );
+      })}
+      {running && (
+        <span>
+          <span className="spinner" aria-hidden="true" /> {running.label}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -172,6 +220,17 @@ function AssetRow({ kind, scene, scenes, storyId, media, disabled, busy, onChang
           )}
         </span>
       </div>
+      {kind === "image" && asset?.status === "ready" && asset.file_path && (
+        <UpscaleRow
+          asset={asset}
+          storyId={storyId}
+          position={scene.position}
+          rowKey={rowKey}
+          locked={locked}
+          busy={busy}
+          onChange={onChange}
+        />
+      )}
       {asset?.file_path && <Preview kind={kind} path={asset.file_path} />}
     </div>
   );

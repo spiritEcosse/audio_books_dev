@@ -28,6 +28,7 @@
   "bundle": {
     "active": true,
     "targets": ["app"],
+    "resources": { "resources/upscayl/": "upscayl/" },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

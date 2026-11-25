@@ -160,6 +160,32 @@ button.secondary { background: #eef1f4 !important; color: #1f2328 !important; }
   color: #8a8f98;
 }
 
+.export-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.4rem 0;
+}
+
+.export-progress progress {
+  width: 260px;
+}
+
+video.export-video {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  margin-top: 0.3rem;
+}
+
+.upscale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.4rem 0;
+}
+
 .spinner {
   display: inline-block;
   width: 0.9em;

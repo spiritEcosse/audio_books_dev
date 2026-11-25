@@ -9,12 +9,14 @@ mod media;
 mod media_queue;
 mod profiles;
 mod stats;
+mod upscale;
+mod video;
 
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::Connection;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 use db::{Message, Scene, Story, StorySettings};
 use stats::StoryStats;
@@ -235,6 +237,8 @@ struct MediaInfo {
     media_dir: String,
     assets: Vec<media::SceneAsset>,
     references: Vec<media::SceneReference>,
+    /// Finished videos (1080p / 4K) in the story's media folder.
+    videos: Vec<video::VideoFile>,
 }
 
 fn load_media(state: &AppState, conn: &Connection, story_id: i64) -> Result<MediaInfo, AppError> {
@@ -250,6 +254,7 @@ fn load_media(state: &AppState, conn: &Connection, story_id: i64) -> Result<Medi
         media_dir: media::story_media_dir(&state.workspace, story_id).display().to_string(),
         assets: media::list_assets(conn, story_id)?,
         references: media::list_references(conn, story_id)?,
+        videos: video::existing_videos(&media::story_media_dir(&state.workspace, story_id)),
     })
 }
 
@@ -481,6 +486,135 @@ async fn generate_image_queue(
     load_media(&state, &conn, story_id)
 }
 
+/// Where the bundled Upscayl may live: the app's resources, or the source tree when running in dev.
+fn upscale_roots(app: &tauri::AppHandle) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(dir) = app.path().resource_dir() {
+        roots.push(dir);
+    }
+    roots.push(PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/resources")));
+    roots
+}
+
+/// Finished images of a story (one scene, or all of them) that still lack the enlarged copy.
+fn images_to_upscale(
+    conn: &Connection,
+    workspace: &std::path::Path,
+    story_id: i64,
+    position: Option<i64>,
+    resolution: upscale::Resolution,
+) -> Result<Vec<(i64, PathBuf)>, AppError> {
+    let media_dir = media::story_media_dir(workspace, story_id);
+    Ok(media::list_assets(conn, story_id)?
+        .into_iter()
+        .filter(|a| a.kind == media::KIND_IMAGE && a.status == media::STATUS_READY)
+        .filter(|a| position.is_none_or(|p| p == a.position))
+        .filter_map(|a| a.file_path.map(|path| (a.position, PathBuf::from(path))))
+        .filter(|(_, path)| path.starts_with(&media_dir) && !upscale::upscaled_path(path, resolution).is_file())
+        .collect())
+}
+
+/// Enlarges every target, carrying on past a failed one; reports all failures together. Blocking.
+fn upscale_all(
+    roots: &[PathBuf],
+    targets: &[(i64, PathBuf)],
+    resolution: upscale::Resolution,
+) -> Result<(), AppError> {
+    let tools = upscale::find_tools(roots)?;
+    let failures: Vec<String> = targets
+        .iter()
+        .filter_map(|(position, path)| {
+            upscale::upscale(path, resolution, &tools).err().map(|e| format!("scene {position}: {e}"))
+        })
+        .collect();
+    if failures.is_empty() { Ok(()) } else { Err(AppError::new(failures.join("; "))) }
+}
+
+/// Upscayl + ffmpeg: writes `<image>-1080p.png` / `-4k.png` next to the finished image(s). Free, local, ~25 s per image.
+#[tauri::command]
+async fn upscale_images(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    story_id: i64,
+    resolution: String,
+    position: Option<i64>,
+) -> Result<MediaInfo, AppError> {
+    let resolution = upscale::Resolution::parse(&resolution)?;
+    let targets = {
+        let conn = state.conn()?;
+        images_to_upscale(&conn, &state.workspace, story_id, position, resolution)?
+    };
+    if !targets.is_empty() {
+        let roots = upscale_roots(&app);
+        tauri::async_runtime::spawn_blocking(move || upscale_all(&roots, &targets, resolution))
+            .await
+            .map_err(|e| AppError::new(format!("upscaling stopped: {e}")))??;
+    }
+    let conn = state.conn()?;
+    load_media(&state, &conn, story_id)
+}
+
+/// Scenes that have both a finished image and finished narration, in order; the error names what is missing.
+fn export_sources(conn: &Connection, story_id: i64) -> Result<Vec<video::SceneSource>, AppError> {
+    let assets = media::list_assets(conn, story_id)?;
+    let ready_file = |position: i64, kind: &str| {
+        assets
+            .iter()
+            .find(|a| a.position == position && a.kind == kind && a.status == media::STATUS_READY)
+            .and_then(|a| a.file_path.as_ref())
+            .map(PathBuf::from)
+    };
+    let mut sources = Vec::new();
+    let mut missing = Vec::new();
+    for scene in db::list_scenes(conn, story_id)? {
+        match (ready_file(scene.position, media::KIND_IMAGE), ready_file(scene.position, media::KIND_AUDIO)) {
+            (Some(image), Some(audio)) => sources.push(video::SceneSource { position: scene.position, image, audio }),
+            _ => missing.push(scene.position.to_string()),
+        }
+    }
+    if missing.is_empty() {
+        Ok(sources)
+    } else {
+        Err(AppError::new(format!("scenes without a finished image or narration: {}", missing.join(", "))))
+    }
+}
+
+const EXPORT_PROGRESS_EVENT: &str = "export-progress";
+
+#[derive(Clone, serde::Serialize)]
+struct ExportProgressEvent {
+    story_id: i64,
+    #[serde(flatten)]
+    progress: video::Progress,
+}
+
+/// Joins every scene (zoom/pan clip + narration, 1 s fades) into `video-1080p.mp4` / `video-4k.mp4`. Long: minutes to
+/// tens of minutes; clips of unchanged scenes are reused.
+#[tauri::command]
+async fn export_video(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    story_id: i64,
+    resolution: String,
+) -> Result<MediaInfo, AppError> {
+    let resolution = upscale::Resolution::parse(&resolution)?;
+    let sources = {
+        let conn = state.conn()?;
+        export_sources(&conn, story_id)?
+    };
+    let media_dir = media::story_media_dir(&state.workspace, story_id);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut report = |progress| {
+            let _ = app.emit(EXPORT_PROGRESS_EVENT, ExportProgressEvent { story_id, progress });
+        };
+        video::export(&sources, resolution, &media_dir, &mut report)
+    })
+        .await
+        .map_err(|e| AppError::new(format!("export stopped: {e}")))??;
+    let conn = state.conn()?;
+    load_media(&state, &conn, story_id)
+}
+
 #[tauri::command]
 fn request_missing_assets(state: State<'_, AppState>, story_id: i64) -> Result<MediaInfo, AppError> {
     let conn = state.conn()?;
@@ -621,7 +755,9 @@ pub fn run() {
             estimate_image_queue,
             generate_image_queue,
             set_scene_reference,
-            clear_scene_reference
+            clear_scene_reference,
+            upscale_images,
+            export_video
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

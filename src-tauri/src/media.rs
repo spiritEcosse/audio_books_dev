@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
 use crate::error::AppError;
-use crate::{db, profiles};
+use crate::{db, profiles, upscale};
 
 pub const KIND_IMAGE: &str = "image";
 pub const KIND_AUDIO: &str = "audio";
@@ -111,6 +111,8 @@ pub struct SceneAsset {
     /// Claude has started generating this queued item (it sets started_at when it launches).
     pub in_progress: bool,
     pub error: Option<String>,
+    /// Enlarged copies (1080p / 4K) that exist next to the image file; empty for audio.
+    pub upscaled: Vec<upscale::Upscaled>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -281,11 +283,17 @@ pub fn list_assets(conn: &Connection, story_id: i64) -> Result<Vec<SceneAsset>, 
          WHERE a.story_id = ?1 ORDER BY a.position, a.kind",
     )?;
     let rows = stmt.query_map([story_id], |row| {
+        let kind: String = row.get(1)?;
+        let file_path: Option<String> = row.get(3)?;
+        let upscaled = match (&file_path, kind.as_str()) {
+            (Some(path), KIND_IMAGE) => upscale::existing_versions(Path::new(path)),
+            _ => Vec::new(),
+        };
         Ok(SceneAsset {
             position: row.get(0)?,
-            kind: row.get(1)?,
+            kind,
             status: row.get(2)?,
-            file_path: row.get(3)?,
+            file_path,
             model_id: row.get(4)?,
             credits: row.get(5)?,
             error: row.get(6)?,
@@ -293,6 +301,7 @@ pub fn list_assets(conn: &Connection, story_id: i64) -> Result<Vec<SceneAsset>, 
             estimate_credits: row.get(8)?,
             in_progress: row.get(9)?,
             stale: row.get(10)?,
+            upscaled,
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
