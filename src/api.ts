@@ -202,6 +202,7 @@ export const api = {
   /** Joins all scenes (zoom/pan clip + narration, fades) into one video. Long: minutes to tens of minutes. */
   exportVideo: (storyId: number, resolution: Resolution) =>
     invoke<MediaInfo>("export_video", { storyId, resolution }),
+  cancelExport: () => invoke<void>("cancel_export"),
   setSceneReference: (storyId: number, position: number, fileName: string, bytes: number[]) =>
     invoke<MediaInfo>("set_scene_reference", { storyId, position, fileName, bytes }),
   clearSceneReference: (storyId: number, position: number) =>

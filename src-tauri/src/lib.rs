@@ -13,7 +13,8 @@ mod upscale;
 mod video;
 
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use rusqlite::Connection;
 use tauri::{Emitter, Manager, State};
@@ -25,6 +26,8 @@ use error::AppError;
 struct AppState {
     db: Mutex<Connection>,
     workspace: PathBuf,
+    /// Set by `cancel_export`; the running export stops when it sees it.
+    export_cancel: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -603,16 +606,30 @@ async fn export_video(
         export_sources(&conn, story_id)?
     };
     let media_dir = media::story_media_dir(&state.workspace, story_id);
-    tauri::async_runtime::spawn_blocking(move || {
+    state.export_cancel.store(false, Ordering::SeqCst);
+    let cancel = Arc::clone(&state.export_cancel);
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
         let mut report = |progress| {
             let _ = app.emit(EXPORT_PROGRESS_EVENT, ExportProgressEvent { story_id, progress });
         };
-        video::export(&sources, resolution, &media_dir, &mut report)
+        video::export(&sources, resolution, &media_dir, &cancel, &mut report)
     })
-        .await
-        .map_err(|e| AppError::new(format!("export stopped: {e}")))??;
+    .await
+    .map_err(|e| AppError::new(format!("export stopped: {e}")))?;
+    // A cancel is not an error: the finished clips stay cached and the panel just goes back to idle.
+    match outcome {
+        Ok(_) => {}
+        Err(error) if video::was_cancelled(&error) => {}
+        Err(error) => return Err(error),
+    }
     let conn = state.conn()?;
     load_media(&state, &conn, story_id)
+}
+
+/// Stops the running video export (if any) within about a second.
+#[tauri::command]
+fn cancel_export(state: State<'_, AppState>) {
+    state.export_cancel.store(true, Ordering::SeqCst);
 }
 
 #[tauri::command]
@@ -726,7 +743,7 @@ pub fn run() {
 
             let conn = Connection::open(data_dir.join("audiobooks.db"))?;
             db::init(&conn)?;
-            app.manage(AppState { db: Mutex::new(conn), workspace: data_dir });
+            app.manage(AppState { db: Mutex::new(conn), workspace: data_dir, export_cancel: Arc::new(AtomicBool::new(false)) });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -757,7 +774,8 @@ pub fn run() {
             set_scene_reference,
             clear_scene_reference,
             upscale_images,
-            export_video
+            export_video,
+            cancel_export
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

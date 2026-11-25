@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
-import type { ExportProgress as ExportProgressEvent } from "./api";
+import { api, type ExportProgress as ExportProgressEvent } from "./api";
 
 const EVENT = "export-progress";
 /** Too early to extrapolate: the first clips say little about the rest. */
@@ -22,13 +22,15 @@ function stageLabel(event: ExportProgressEvent): string {
   return event.stage === "clip" ? `Сцена ${event.scene} из ${event.scenes}` : "Склейка и озвучка";
 }
 
-/** Live progress of a video export: a bar, the scene being rendered and the time left. */
+/** Live progress of a video export: a bar, the scene being rendered, the time left and a cancel button. */
 export function ExportProgress({ storyId, active }: { storyId: number; active: boolean }) {
   const [shown, setShown] = useState<Shown | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     if (!active) {
       setShown(null);
+      setCancelling(false);
       return;
     }
     const startedAt = Date.now();
@@ -47,15 +49,31 @@ export function ExportProgress({ storyId, active }: { storyId: number; active: b
     };
   }, [active, storyId]);
 
-  if (!active || !shown) return null;
-  const { event, etaSecs } = shown;
+  if (!active) return null;
+  const cancel = () => {
+    setCancelling(true);
+    api.cancelExport().catch(() => setCancelling(false));
+  };
   return (
     <div className="export-progress" role="status">
-      <progress max={100} value={event.percent} />
-      <span>
-        {stageLabel(event)} · {Math.round(event.percent)}%
-        {etaSecs !== null && ` · осталось ${formatEta(etaSecs)}`}
-      </span>
+      {shown && (
+        <>
+          <progress max={100} value={shown.event.percent} />
+          <span>
+            {stageLabel(shown.event)} · {Math.round(shown.event.percent)}%
+            {shown.etaSecs !== null && ` · осталось ${formatEta(shown.etaSecs)}`}
+          </span>
+        </>
+      )}
+      <button
+        type="button"
+        className="secondary"
+        disabled={cancelling}
+        title="Готовые клипы сохранятся: следующая сборка продолжит с них"
+        onClick={cancel}
+      >
+        {cancelling ? "Останавливаю…" : "Отменить сборку"}
+      </button>
     </div>
   );
 }

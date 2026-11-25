@@ -11,12 +11,21 @@ use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 
 use crate::claude;
 use crate::error::AppError;
 use crate::upscale::{self, Resolution};
+
+/// The message of the error a cancelled export ends with; see `was_cancelled`.
+const CANCELLED_MESSAGE: &str = "export cancelled";
+
+/// True when the export stopped because the user cancelled it, not because something broke.
+pub fn was_cancelled(error: &AppError) -> bool {
+    error.to_string() == CANCELLED_MESSAGE
+}
 
 pub const FPS: u32 = 30;
 const TRANSITION_SECS: f64 = 1.0;
@@ -278,7 +287,16 @@ fn narration_seconds(ffprobe: &Path, audio: &Path) -> Result<f64, AppError> {
 }
 
 /// Runs ffmpeg and reports the number of the frame it is on, as ffmpeg prints it about twice a second.
-fn run_ffmpeg(ffmpeg: &Path, args: &[OsString], mut on_frame: impl FnMut(u64)) -> Result<(), AppError> {
+/// Once `cancel` is set (checked on each report) ffmpeg is killed and the run ends with the cancelled error.
+fn run_ffmpeg(
+    ffmpeg: &Path,
+    args: &[OsString],
+    cancel: &AtomicBool,
+    mut on_frame: impl FnMut(u64),
+) -> Result<(), AppError> {
+    if cancel.load(Ordering::SeqCst) {
+        return Err(AppError::new(CANCELLED_MESSAGE));
+    }
     let mut child = Command::new(ffmpeg)
         .args(["-progress", "pipe:1", "-nostats"])
         .args(args)
@@ -301,6 +319,12 @@ fn run_ffmpeg(ffmpeg: &Path, args: &[OsString], mut on_frame: impl FnMut(u64)) -
             if let Some(frame) = parse_frame(&line) {
                 on_frame(frame);
             }
+            if cancel.load(Ordering::SeqCst) {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = log.join();
+                return Err(AppError::new(CANCELLED_MESSAGE));
+            }
         }
     }
     let status = child.wait().map_err(|e| AppError::new(format!("ffmpeg stopped: {e}")))?;
@@ -317,12 +341,13 @@ fn render_atomically(
     ffmpeg: &Path,
     build: impl Fn(&Path) -> Vec<OsString>,
     target: &Path,
+    cancel: &AtomicBool,
     on_frame: impl FnMut(u64),
 ) -> Result<(), AppError> {
     let mut part = target.as_os_str().to_owned();
     part.push(".part.mp4");
     let part = PathBuf::from(part);
-    let result = run_ffmpeg(ffmpeg, &build(&part), on_frame).and_then(|()| {
+    let result = run_ffmpeg(ffmpeg, &build(&part), cancel, on_frame).and_then(|()| {
         std::fs::rename(&part, target).map_err(|e| AppError::new(format!("cannot save {}: {e}", target.display())))
     });
     if result.is_err() {
@@ -332,11 +357,13 @@ fn render_atomically(
 }
 
 /// Renders the whole story. Blocking and long: roughly 2-5 s of render per second of video for new clips.
-/// `on_progress` is called about twice a second while ffmpeg works.
+/// `on_progress` is called about twice a second while ffmpeg works. Setting `cancel` stops the render within about a
+/// second; finished clips stay cached, so the next export resumes from them.
 pub fn export(
     scenes: &[SceneSource],
     resolution: Resolution,
     media_dir: &Path,
+    cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(Progress),
 ) -> Result<PathBuf, AppError> {
     if scenes.is_empty() {
@@ -374,6 +401,7 @@ pub fn export(
             &ffmpeg,
             |out| clip_args(&image, motion, secs, resolution, out),
             &clips[index],
+            cancel,
             |frame| report("clip", index + 1, done + frame as f64),
         )?;
         done += clip_frames(index);
@@ -385,6 +413,7 @@ pub fn export(
         &ffmpeg,
         |out| assemble_args(&clips, &audios, &plan, out),
         &target,
+        cancel,
         |frame| report("join", scene_count, done + frame as f64 * ASSEMBLY_WEIGHT),
     )?;
     report("join", scene_count, total);
@@ -528,8 +557,55 @@ mod tests {
 
     #[test]
     fn export_rejects_an_empty_story() {
-        let err = export(&[], Resolution::Hd, Path::new("/tmp"), &mut |_| {}).unwrap_err();
+        let err = export(&[], Resolution::Hd, Path::new("/tmp"), &AtomicBool::new(false), &mut |_| {}).unwrap_err();
         assert!(err.to_string().contains("no scenes"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelling_kills_ffmpeg_and_leaves_no_part_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("cancel");
+        let fake = dir.join("fake-ffmpeg");
+        std::fs::write(&fake, "#!/bin/sh\nfor i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do echo frame=$i; sleep 1; done\n")
+            .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let target = dir.join("out.mp4");
+        let cancel = AtomicBool::new(false);
+        let started = std::time::Instant::now();
+
+        let result = render_atomically(
+            &fake,
+            |part| {
+                std::fs::write(part, b"half a video").unwrap();
+                Vec::new()
+            },
+            &target,
+            &cancel,
+            |frame| {
+                if frame >= 2 {
+                    cancel.store(true, Ordering::SeqCst);
+                }
+            },
+        );
+
+        assert!(was_cancelled(&result.unwrap_err()));
+        assert!(started.elapsed().as_secs() < 10, "the fake render takes 20 s if it is not killed");
+        assert!(!target.exists());
+        assert!(!dir.join("out.mp4.part.mp4").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_cancel_set_before_the_start_stops_without_running_ffmpeg() {
+        let cancel = AtomicBool::new(true);
+        let error = run_ffmpeg(Path::new("/definitely/not/ffmpeg"), &[], &cancel, |_| {}).unwrap_err();
+        assert!(was_cancelled(&error), "{error}");
+    }
+
+    #[test]
+    fn other_errors_are_not_mistaken_for_a_cancel() {
+        assert!(!was_cancelled(&AppError::new("ffmpeg failed (exit status: 1)")));
     }
 
     /// Needs ffmpeg and ffprobe: `cargo test -- --ignored`.
@@ -557,7 +633,7 @@ mod tests {
             scenes.push(SceneSource { position, image, audio });
         }
         let mut reports: Vec<Progress> = Vec::new();
-        let video = export(&scenes, Resolution::Hd, &dir, &mut |progress| reports.push(progress)).unwrap();
+        let video = export(&scenes, Resolution::Hd, &dir, &AtomicBool::new(false), &mut |progress| reports.push(progress)).unwrap();
         assert!(reports.len() > 3, "{reports:?}");
         assert!(reports.windows(2).all(|pair| pair[1].percent >= pair[0].percent), "{reports:?}");
         assert_eq!(reports.last().unwrap().percent, 100.0);
