@@ -4,6 +4,7 @@
 use std::path::Path;
 
 pub const DEFAULT_PROFILE: &str = "fairy_tale";
+pub const BEDTIME_PROFILE: &str = "bedtime";
 const MAX_CUSTOM_PROFILE_BYTES: u64 = 20_000;
 const CUSTOM_PREFIX: &str = "custom:";
 
@@ -28,6 +29,12 @@ fn builtin_profiles() -> Vec<Profile> {
             label: "Роман".into(),
             builtin: true,
             body: include_str!("../prompts/profiles/novel.md").into(),
+        },
+        Profile {
+            id: BEDTIME_PROFILE.into(),
+            label: "Сказки на ночь".into(),
+            builtin: true,
+            body: include_str!("../prompts/profiles/bedtime.md").into(),
         },
     ]
 }
@@ -105,7 +112,7 @@ mod tests {
 
         let ids: Vec<_> = list(&dir).into_iter().map(|p| p.id).collect();
 
-        assert_eq!(ids, ["fairy_tale", "novel", "custom:poetry"]);
+        assert_eq!(ids, ["fairy_tale", "novel", "bedtime", "custom:poetry"]);
         assert_eq!(find(&dir, "custom:poetry").unwrap().label, "Стихи");
     }
 
@@ -125,6 +132,6 @@ mod tests {
     #[test]
     fn missing_folder_yields_only_builtins() {
         let dir = std::env::temp_dir().join("audiobooks-test-nonexistent-dir");
-        assert_eq!(list(&dir).len(), 2);
+        assert_eq!(list(&dir).len(), 3);
     }
 }

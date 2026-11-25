@@ -128,7 +128,10 @@ pub fn is_known_voice(id: &str) -> bool {
 }
 
 pub fn default_voice_for(profile: &str) -> &'static str {
-    if profile == FAIRY_TALE_PROFILE { FAIRY_TALE_VOICE } else { DEFAULT_VOICE }
+    match profile {
+        FAIRY_TALE_PROFILE | crate::profiles::BEDTIME_PROFILE => FAIRY_TALE_VOICE,
+        _ => DEFAULT_VOICE,
+    }
 }
 
 /// The story's narration voice: the saved choice, else the default for its writing profile.

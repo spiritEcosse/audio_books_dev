@@ -73,3 +73,15 @@ button.secondary { background: #eef1f4 !important; color: #1f2328 !important; }
 .settings-row select, .settings-row input { font: inherit; padding: 5px 7px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #1f2328; width: 150px; }
 .stats { font-size: 14px; font-weight: 600; }
 .stats.over { color: #b42318; }
+
+.audio-tag {
+  color: #8a8f98;
+  font-size: 0.85em;
+}
+
+.tag-toggle {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.85em;
+  color: #8a8f98;
+}
