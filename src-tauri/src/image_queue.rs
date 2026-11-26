@@ -35,7 +35,7 @@ const GENERATE_SYSTEM: &str = r#"You operate ElevenLabs tools only and never any
 1. The task names a flow_id; use it for every call (nodes of different flows cannot be connected). If it says none, call creative_create_flow once and use that flow_id.
 2. For EVERY entry of "assets" call creative_finalize_asset_upload with its asset_id and the flow_id, in parallel in one step. Remember the node_id returned for each asset's key.
 3. For EVERY item call creative_generate_image with: prompt = the item's "prompt" copied character for character (never change, translate, fix, shorten or remove anything), model_id = the item's "model_id", flow_id, connect_from = the node_ids belonging to the keys in the item's "references" (leave connect_from out when the item has none), generations_count 1, and NO estimate_only. Make these calls in parallel in one step. Call it at most once per item: a repeated call is charged again, so never retry, even after an error. Remember which session_id belongs to which item.
-4. Call creative_get_flow_run_status with the flow_id and all session_ids. If not all_completed and not has_failures, call it again (you cannot sleep, just call again) until one of them is true.
+4. Call creative_get_flow_run_status with the flow_id and all session_ids. If not all_completed and not has_failures, call it again (you cannot sleep, just call again) until one of them is true. Generations can take several minutes, so keep polling for up to 150 calls in total and never stop or report a generation as unfinished before that.
 5. Reply with ONLY one JSON object and nothing else: {"results":[{"position":<int>,"url":<the generation's content_url>,"credits":<its price.credits>,"prompt":<the generation's prompt exactly as the status tool returned it>}],"errors":[{"position":<int>,"message":"<reason>"}]}"#;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -352,7 +352,8 @@ mod tests {
     fn a_single_image_with_a_reference_gets_a_long_polling_budget() {
         // finalize the reference + generate + status polls while a ~1 min generation runs
         let turns = media_queue::GENERATE_BASE_TURNS + TURNS_PER_ITEM * 2;
-        assert!(turns >= 40, "{turns} turns ended a real run with the image generated but not downloaded");
+        assert!(turns >= 160, "{turns} turns ended a real run with the image generated but not downloaded");
+        assert!(GENERATE_SYSTEM.contains("up to 150 calls"), "the prompt promises the polling the budget pays for");
     }
 
     #[test]

@@ -24,7 +24,7 @@ const ESTIMATE_SYSTEM: &str = r#"You operate ElevenLabs tools only and never any
 const GENERATE_SYSTEM: &str = r#"You operate ElevenLabs tools only and never any other tool. Follow the steps exactly.
 1. Call creative_create_flow once and remember its flow_id.
 2. For EVERY item call creative_generate_speech with: prompt = the item's "text" copied character for character (never change, translate, fix, shorten or remove anything, including [square bracket tags]), model_id "eleven_v4", voice_id = the item's "voice_id", flow_id = the flow from step 1, generations_count 1, and NO estimate_only. Make these calls in parallel in one step. Call it at most once per item: a repeated call is charged again, so never retry, even after an error. Remember which session_id belongs to which item.
-3. Call creative_get_flow_run_status with the flow_id and all session_ids. If not all_completed and not has_failures, call it again (you cannot sleep, just call again) until one of them is true.
+3. Call creative_get_flow_run_status with the flow_id and all session_ids. If not all_completed and not has_failures, call it again (you cannot sleep, just call again) until one of them is true. Generations can take several minutes, so keep polling for up to 150 calls in total and never stop or report a generation as unfinished before that.
 4. Reply with ONLY one JSON object and nothing else: {"results":[{"position":<int>,"url":<the generation's content_url>,"credits":<its price.credits>,"prompt":<the generation's prompt exactly as the status tool returned it>}],"errors":[{"position":<int>,"message":"<reason>"}]}"#;
 
 #[derive(Debug, Clone, PartialEq)]
