@@ -226,6 +226,9 @@ export const api = {
     invoke<MediaInfo>("clear_scene_reference", { storyId, position }),
   addCharacter: (storyId: number, name: string, fileName: string, bytes: number[]) =>
     invoke<MediaInfo>("add_character", { storyId, name, fileName, bytes }),
+  /** Generates the character picture with the story's image model. Spends credits. */
+  generateCharacter: (storyId: number, name: string, prompt: string) =>
+    invoke<MediaInfo>("generate_character", { storyId, name, prompt }),
   removeCharacter: (storyId: number, characterId: number) =>
     invoke<MediaInfo>("remove_character", { storyId, characterId }),
   setSceneCharacter: (storyId: number, position: number, characterId: number, included: boolean) =>

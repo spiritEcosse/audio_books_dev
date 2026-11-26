@@ -1,7 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useState } from "react";
 import { api, MAX_CHARACTERS, type MediaInfo } from "./api";
-import type { MediaChange } from "./mediaCost";
+import { type MediaChange, formatCredits } from "./mediaCost";
 import { readBytes } from "./SceneMedia";
 
 interface Props {
@@ -14,9 +14,23 @@ interface Props {
 export function Characters({ media, disabled, onChange }: Props) {
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [prompt, setPrompt] = useState("");
   const [inputKey, setInputKey] = useState(0);
   const full = media.characters.length >= MAX_CHARACTERS;
   const canAdd = !disabled && !full && name.trim() !== "" && file !== null;
+  const canGenerate = !disabled && !full && name.trim() !== "" && prompt.trim() !== "";
+  const generationCredits = media.image_models.find((model) => model.id === media.image_model)?.credits ?? 0;
+
+  const generate = () => {
+    const label = name.trim();
+    const description = prompt.trim();
+    setName("");
+    setPrompt("");
+    onChange(() => api.generateCharacter(media.story_id, label, description), {
+      key: "panel:character-generate",
+      label: "Генерирую персонажа… около минуты",
+    });
+  };
 
   const add = () => {
     if (!file) return;
@@ -74,6 +88,24 @@ export function Characters({ media, disabled, onChange }: Props) {
           Добавить
         </button>
         {full && <span className="muted small">Не больше {MAX_CHARACTERS} персонажей</span>}
+      </div>
+      <div className="character-form">
+        <textarea
+          rows={2}
+          placeholder="Или опишите персонажа и сгенерируйте: маленький милый слонёнок с большими розовыми ушами, сказочный мультяшный стиль, простой светлый фон, в полный рост"
+          value={prompt}
+          maxLength={1000}
+          disabled={disabled || full}
+          onChange={(e) => setPrompt(e.target.value)}
+        />
+        <button
+          type="button"
+          disabled={!canGenerate}
+          title="Картинка создаётся моделью картинок истории, как сцена. Имя берётся из поля выше. Кредиты тратятся только после нажатия"
+          onClick={generate}
+        >
+          Сгенерировать (≈{formatCredits(generationCredits)} кр.)
+        </button>
       </div>
     </details>
   );

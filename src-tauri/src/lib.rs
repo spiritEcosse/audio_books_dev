@@ -677,6 +677,44 @@ fn add_character(
     load_media(&state, &conn, story_id)
 }
 
+/// Generates a character picture with the story's image model (spends credits, about the price of one scene image)
+/// and adds it as a character. Name and description are checked first, so a bad input costs nothing.
+#[tauri::command]
+async fn generate_character(
+    state: State<'_, AppState>,
+    story_id: i64,
+    name: String,
+    prompt: String,
+) -> Result<MediaInfo, AppError> {
+    let (name, prompt, model_id) = {
+        let conn = state.conn()?;
+        let (name, prompt) = characters::prepare_generation(&conn, story_id, &name, &prompt)?;
+        (name, prompt, media::image_model(&conn, story_id)?)
+    };
+    let workspace = state.workspace.clone();
+    let dir = characters::character_dir(&workspace, story_id);
+    std::fs::create_dir_all(&dir).map_err(|e| AppError::new(format!("cannot create {}: {e}", dir.display())))?;
+    let item = image_queue::QueuedImage {
+        position: characters::GENERATION_POSITION,
+        prompt,
+        model_id,
+        estimate_credits: None,
+        references: Vec::new(),
+    };
+    let results = tauri::async_runtime::spawn_blocking(move || image_queue::generate(&workspace, &dir, &[item]))
+        .await
+        .map_err(|e| AppError::new(format!("generation task failed: {e}")))??;
+    let saved = results
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::new("Claude returned no result for the character"))?
+        .saved
+        .map_err(|message| AppError::new(format!("character generation failed, credits may already have been spent: {message}")))?;
+    let conn = state.conn()?;
+    characters::adopt_generated(&conn, story_id, &name, std::path::Path::new(&saved.path))?;
+    load_media(&state, &conn, story_id)
+}
+
 #[tauri::command]
 fn remove_character(state: State<'_, AppState>, story_id: i64, character_id: i64) -> Result<MediaInfo, AppError> {
     let conn = state.conn()?;
@@ -816,6 +854,7 @@ pub fn run() {
             set_scene_reference,
             clear_scene_reference,
             add_character,
+            generate_character,
             remove_character,
             set_scene_character,
             upscale_images,

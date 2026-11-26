@@ -63,6 +63,32 @@ fn save_file(workspace: &Path, story_id: i64, file_name: &str, bytes: &[u8]) -> 
     Ok(path)
 }
 
+/// Position used to name the files of generated characters (`scene--1-image-v1.png` style); no scene has it.
+pub const GENERATION_POSITION: i64 = -1;
+const MAX_PROMPT_CHARS: usize = 1000;
+
+/// Checks a new character's name, the story and the room left, before anything is saved or paid for.
+fn check_new(conn: &Connection, story_id: i64, name: &str) -> Result<String, AppError> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > MAX_NAME_CHARS {
+        return Err(AppError::new(format!("a character name must be 1 to {MAX_NAME_CHARS} characters")));
+    }
+    db::get_story(conn, story_id)?;
+    if list(conn, story_id)?.len() >= MAX_CHARACTERS {
+        return Err(AppError::new(format!("a story can have at most {MAX_CHARACTERS} characters")));
+    }
+    Ok(name.to_owned())
+}
+
+fn insert_row(conn: &Connection, story_id: i64, name: &str, path: &Path) -> Result<Character, AppError> {
+    let file_path = path.display().to_string();
+    conn.execute(
+        "INSERT INTO story_characters (story_id, name, file_path) VALUES (?1, ?2, ?3)",
+        params![story_id, name, file_path],
+    )?;
+    Ok(Character { id: conn.last_insert_rowid(), name: name.to_owned(), file_path })
+}
+
 /// Adds a character with its picture to the story.
 pub fn add(
     conn: &Connection,
@@ -72,27 +98,42 @@ pub fn add(
     file_name: &str,
     bytes: &[u8],
 ) -> Result<Character, AppError> {
-    let name = name.trim();
-    if name.is_empty() || name.chars().count() > MAX_NAME_CHARS {
-        return Err(AppError::new(format!("a character name must be 1 to {MAX_NAME_CHARS} characters")));
-    }
-    db::get_story(conn, story_id)?;
-    if list(conn, story_id)?.len() >= MAX_CHARACTERS {
-        return Err(AppError::new(format!("a story can have at most {MAX_CHARACTERS} characters")));
-    }
+    let name = check_new(conn, story_id, name)?;
     let path = save_file(workspace, story_id, file_name, bytes)?;
-    let file_path = path.display().to_string();
-    let inserted = conn.execute(
-        "INSERT INTO story_characters (story_id, name, file_path) VALUES (?1, ?2, ?3)",
-        params![story_id, name, file_path],
-    );
-    match inserted {
-        Ok(_) => Ok(Character { id: conn.last_insert_rowid(), name: name.to_owned(), file_path }),
-        Err(error) => {
-            let _ = std::fs::remove_file(&path);
-            Err(error.into())
-        }
+    insert_row(conn, story_id, &name, &path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&path);
+    })
+}
+
+/// Validates a character that is about to be generated; returns the trimmed name and prompt.
+pub fn prepare_generation(
+    conn: &Connection,
+    story_id: i64,
+    name: &str,
+    prompt: &str,
+) -> Result<(String, String), AppError> {
+    let name = check_new(conn, story_id, name)?;
+    let prompt = prompt.trim();
+    if prompt.is_empty() || prompt.chars().count() > MAX_PROMPT_CHARS {
+        return Err(AppError::new(format!("describe the character in 1 to {MAX_PROMPT_CHARS} characters")));
     }
+    Ok((name, prompt.to_owned()))
+}
+
+/// The folder a story's character pictures live in (uploaded and generated).
+pub fn character_dir(workspace: &Path, story_id: i64) -> PathBuf {
+    media::story_media_dir(workspace, story_id).join(CHARACTER_DIR)
+}
+
+/// Registers a picture that was generated into the character folder: it gets the usual unique name and becomes
+/// the character. The credits are already spent, so on failure the file is left where it is.
+pub fn adopt_generated(conn: &Connection, story_id: i64, name: &str, generated: &Path) -> Result<Character, AppError> {
+    let extension = generated.extension().and_then(|e| e.to_str()).unwrap_or("png");
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let target = generated.with_file_name(format!("character-{stamp}.{extension}"));
+    std::fs::rename(generated, &target)
+        .map_err(|e| AppError::new(format!("cannot move {}: {e}", generated.display())))?;
+    insert_row(conn, story_id, name, &target)
 }
 
 /// Removes a character; returns its picture so the caller can delete the file.
@@ -159,13 +200,21 @@ pub fn files_for_scene(conn: &Connection, story_id: i64, position: i64) -> Resul
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
 
     fn setup() -> (Connection, i64, PathBuf) {
         let conn = Connection::open_in_memory().unwrap();
         db::init(&conn).unwrap();
         let story = db::create_story(&conn, "t", "body").unwrap();
-        let dir = std::env::temp_dir().join(format!("audiobooks-test-characters-{}-{}", std::process::id(), story.id));
+        // One folder per test: they run in parallel and each setup wipes its folder first.
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "audiobooks-test-characters-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         (conn, story.id, dir)
@@ -190,6 +239,39 @@ mod tests {
         assert!(add(&conn, &dir, story, "Tembo", "a.png", b"").is_err(), "empty file");
         assert!(add(&conn, &dir, 999, "Tembo", "a.png", b"x").is_err(), "unknown story");
         assert!(list(&conn, story).unwrap().is_empty());
+    }
+
+    #[test]
+    fn generation_is_validated_before_any_credits_are_spent() {
+        let (conn, story, dir) = setup();
+        assert_eq!(
+            prepare_generation(&conn, story, " Tembo ", " a small elephant ").unwrap(),
+            ("Tembo".to_owned(), "a small elephant".to_owned())
+        );
+        assert!(prepare_generation(&conn, story, "", "a small elephant").is_err(), "no name");
+        assert!(prepare_generation(&conn, story, "Tembo", "  ").is_err(), "no description");
+        assert!(prepare_generation(&conn, story, "Tembo", &"d".repeat(MAX_PROMPT_CHARS + 1)).is_err());
+        assert!(prepare_generation(&conn, 999, "Tembo", "x").is_err(), "unknown story");
+        for index in 0..MAX_CHARACTERS {
+            add(&conn, &dir, story, &format!("hero {index}"), "a.png", b"x").unwrap();
+        }
+        assert!(prepare_generation(&conn, story, "Tembo", "x").is_err(), "no room left");
+    }
+
+    #[test]
+    fn a_generated_picture_becomes_a_character_under_a_unique_file_name() {
+        let (conn, story, dir) = setup();
+        let folder = character_dir(&dir, story);
+        std::fs::create_dir_all(&folder).unwrap();
+        let generated = folder.join("scene--1-image-v1.png");
+        std::fs::write(&generated, b"generated").unwrap();
+
+        let hero = adopt_generated(&conn, story, "Tembo", &generated).unwrap();
+
+        assert!(!generated.exists(), "the file was renamed, not copied");
+        assert_eq!(std::fs::read(&hero.file_path).unwrap(), b"generated");
+        assert!(hero.file_path.contains("character-") && hero.file_path.ends_with(".png"));
+        assert_eq!(list(&conn, story).unwrap(), [hero]);
     }
 
     #[test]

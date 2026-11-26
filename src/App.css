@@ -206,6 +206,11 @@ video.export-video {
   gap: 0.5rem;
 }
 
+.character-form textarea {
+  flex: 1;
+  min-width: 18rem;
+}
+
 .scene-characters {
   display: flex;
   flex-wrap: wrap;
