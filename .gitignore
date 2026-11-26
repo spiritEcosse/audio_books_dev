@@ -29,3 +29,6 @@ dist-ssr
 # Upscayl CLI and model are fetched by scripts/fetch-upscayl.sh
 src-tauri/resources/upscayl/*
 !src-tauri/resources/upscayl/.gitkeep
+
+# Per-task git worktrees (see "Workflow" in CLAUDE.md)
+.claude/worktrees/

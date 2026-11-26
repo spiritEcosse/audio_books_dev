@@ -12,9 +12,22 @@ A Tauri 2 desktop app (Rust backend + React 19/TypeScript/Vite frontend, pnpm) f
 - `pnpm tauri dev` — run the full app (Vite dev server + Rust backend). `pnpm dev` alone runs only the web frontend, where `invoke` calls will fail.
 - `pnpm build` — `tsc && vite build` (type-check + frontend bundle). This is the only frontend check; there is no linter or test runner configured.
 - `pnpm tauri build` — production bundle.
-- Rust: `cd src-tauri && cargo check` / `cargo build`. There are no tests yet; `cargo test <name>` runs a single one once `#[test]`s exist.
+- Rust: `cd src-tauri && cargo check` / `cargo build` / `cargo test` (`cargo test <name>` runs a single one).
 
 `.env` (see `.env.example`) holds `ELEVENLABS_API_KEY` and `ANTHROPIC_API_KEY`. Optional `CLAUDE_BIN` env var overrides the `claude` binary path.
+
+## Workflow (every feature or fix)
+
+All changes reach `dev` through a pull request. Never commit or push to `dev` directly. This rule is standing approval to commit, push the task branch, open its PR, enable auto-merge and clean up afterwards.
+
+0. If there is no GitHub remote, create the repository with `gh repo create`; ask whether it is public or private first. This one is `spiritEcosse/audio_books_dev` (public, default branch `dev`).
+1. Work in a separate worktree, one per task: `git fetch origin && git worktree add .claude/worktrees/<name> -b <type>/<name> origin/dev` (`<type>`: feat, fix, chore, ...). A fresh worktree has no untracked files: run `pnpm install`, and for `pnpm tauri dev` copy `.env` and run `scripts/fetch-upscayl.sh`.
+2. Run `pnpm build` and `cargo test` in the worktree, commit, then `git push -u origin HEAD`.
+3. `gh pr create --base dev`, then `gh pr merge --auto --squash`. GitHub merges once the `checks` job (`.github/workflows/ci.yml`) passes and deletes the remote branch.
+4. Watch with `gh pr checks --watch`. If a check fails, fix it in the same worktree and push again; never bypass the check.
+5. Only after `gh pr view --json state` reports `MERGED`: from the main checkout run `git pull --ff-only` on `dev`, `git worktree remove .claude/worktrees/<name>` and `git branch -D <type>/<name>`. If the worktree has uncommitted files, ask instead of forcing removal.
+
+The repository is public: never commit keys, `.env`, databases or the user's stories and media.
 
 ## Architecture
 
