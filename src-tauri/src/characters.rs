@@ -283,7 +283,7 @@ mod tests {
     fn an_added_character_is_listed_and_its_file_is_on_disk() {
         let (conn, story, dir) = setup();
         let hero = add(&conn, &dir, story, "  Tembo ", "tembo.PNG", b"png bytes").unwrap();
-        assert_eq!(list(&conn, story).unwrap(), [hero.clone()]);
+        assert_eq!(list(&conn, story).unwrap(), std::slice::from_ref(&hero));
         assert_eq!(hero.name, "Tembo", "the name is trimmed");
         assert_eq!(std::fs::read(&hero.file_path).unwrap(), b"png bytes");
         assert!(hero.file_path.ends_with(".png"));

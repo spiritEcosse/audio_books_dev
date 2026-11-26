@@ -322,7 +322,9 @@ mod tests {
     #[test]
     fn find_tools_reports_missing_upscayl_with_the_fix() {
         let dir = temp_dir("no-tools");
-        let err = find_tools(&[dir.clone()]).unwrap_err().to_string();
+        let err = find_tools(std::slice::from_ref(&dir))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("fetch-upscayl.sh"), "{err}");
         std::fs::remove_dir_all(dir).unwrap();
     }

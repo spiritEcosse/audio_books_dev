@@ -10,9 +10,10 @@ A Tauri 2 desktop app (Rust backend + React 19/TypeScript/Vite frontend, pnpm) f
 
 - `pnpm install`
 - `pnpm tauri dev` — run the full app (Vite dev server + Rust backend). `pnpm dev` alone runs only the web frontend, where `invoke` calls will fail.
-- `pnpm build` — `tsc && vite build` (type-check + frontend bundle). This is the only frontend check; there is no linter or test runner configured.
+- `pnpm build` — `tsc && vite build` (type-check + frontend bundle). 
+- `pnpm lint` (oxlint) and `pnpm test` (vitest; `pnpm exec vitest run <file>` for one file).
 - `pnpm tauri build` — production bundle.
-- Rust: `cd src-tauri && cargo check` / `cargo build` / `cargo test` (`cargo test <name>` runs a single one).
+- Rust: `cd src-tauri && cargo check` / `cargo build` / `cargo test` (`cargo test <name>` runs a single one) / `cargo fmt` / `cargo clippy --all-targets -- -D warnings`.
 
 `.env` (see `.env.example`) holds `ELEVENLABS_API_KEY` and `ANTHROPIC_API_KEY`. Optional `CLAUDE_BIN` env var overrides the `claude` binary path.
 
@@ -23,8 +24,8 @@ All changes reach `main` through a pull request. Never commit, merge or push to 
 0. If there is no GitHub remote, create the repository with `gh repo create`; ask whether it is public or private first. This one is `spiritEcosse/audio_books_dev` (public, default branch `main`).
 1. A new feature requires a GitHub issue: if none exists, `gh issue create` before starting. Reference it in commits (`refs #N`) and in the PR body (`Closes #N`).
 2. Every feature and fix gets its own worktree next to the repository: `git fetch origin && git worktree add ../worktrees/<name> -b <type>/<name> origin/main` (`<type>`: feat, fix, chore, ...). A fresh worktree has no untracked files: run `pnpm install`, and for `pnpm tauri dev` copy `.env` and run `scripts/fetch-upscayl.sh`.
-3. Run `pnpm build` and `cargo test` in the worktree, commit, then `git push -u origin HEAD`.
-4. `gh pr create --base main`, then `gh pr merge --auto --merge`. GitHub merges once the `checks` job (`.github/workflows/ci.yml`) passes and deletes the remote branch.
+3. Run `pnpm lint`, `pnpm test`, `pnpm build`, and in `src-tauri` `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` in the worktree, commit, then `git push -u origin HEAD`.
+4. `gh pr create --base main`, then `gh pr merge --auto --merge`. GitHub merges once the `checks` job (`.github/workflows/ci.yml`: the jobs of `checks.yml` including a dependency audit, then a macOS app build uploaded as an artifact) passes and deletes the remote branch.
 5. Watch with `gh pr checks --watch`. If a check fails, fix it in the same worktree and push again; never bypass the check.
 6. Only after `gh pr view --json state` reports `MERGED`: from the main checkout run `git pull --ff-only` on `main`, `git worktree remove ../worktrees/<name>` and `git branch -d <type>/<name>`. If the worktree has uncommitted files, ask instead of forcing removal.
 

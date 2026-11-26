@@ -201,11 +201,10 @@ pub fn assemble_args(
     }
     let mut graph: Vec<String> = Vec::new();
     let mut video = "0:v".to_owned();
-    for index in 1..count {
+    for (index, start) in plan.clip_starts.iter().enumerate().take(count).skip(1) {
         let label = format!("x{index}");
         graph.push(format!(
-            "[{video}][{index}:v]xfade=transition=fade:duration={TRANSITION_SECS}:offset={:.3}[{label}]",
-            plan.clip_starts[index]
+            "[{video}][{index}:v]xfade=transition=fade:duration={TRANSITION_SECS}:offset={start:.3}[{label}]"
         ));
         video = label;
     }
@@ -824,7 +823,7 @@ mod tests {
             let image = dir.join(format!("scene-{position}.png"));
             let audio = dir.join(format!("scene-{position}.mp3"));
             for (input, output) in [
-                (format!("testsrc=size=640x360:rate=1"), &image),
+                ("testsrc=size=640x360:rate=1".to_string(), &image),
                 (
                     format!("sine=frequency={}:duration={seconds}", 300 + position * 200),
                     &audio,
