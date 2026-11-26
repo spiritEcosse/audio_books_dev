@@ -222,8 +222,10 @@ pub fn assemble_args(
             format!("[a{index}]")
         })
         .collect();
+    // After `loudnorm`, `amix` can stamp a frame with no time, which the muxer rejects; the mix is continuous, so
+    // its times are counted afresh from the samples.
     graph.push(format!(
-        "{}amix=inputs={count}:normalize=0:duration=longest[aout]",
+        "{}amix=inputs={count}:normalize=0:duration=longest,asetpts=N/SR/TB[aout]",
         delayed.concat()
     ));
     args.extend([
@@ -664,7 +666,9 @@ mod tests {
             "{graph}"
         );
         assert!(
-            graph.ends_with("[a0][a1][a2]amix=inputs=3:normalize=0:duration=longest[aout]"),
+            graph.ends_with(
+                "[a0][a1][a2]amix=inputs=3:normalize=0:duration=longest,asetpts=N/SR/TB[aout]"
+            ),
             "{graph}"
         );
         assert!(args.contains(&"[x2]".to_owned()));
@@ -835,6 +839,50 @@ mod tests {
         let log = String::from_utf8_lossy(&output.stderr);
         let (_, rest) = log.split_once("mean_volume: ").unwrap();
         rest.split_whitespace().next().unwrap().parse().unwrap()
+    }
+
+    /// Needs ffmpeg. These lengths made `amix` stamp a broken time on a frame after `loudnorm`, which the AAC muxer
+    /// rejects; the two short scenes of the export test below never showed it.
+    #[test]
+    #[ignore]
+    fn the_join_survives_several_normalised_narrations() {
+        let ffmpeg = find_tool("ffmpeg").unwrap();
+        let dir = temp_dir("join");
+        let lengths = [7.3, 8.1, 6.7];
+        let plan = plan(&lengths);
+        let make = |input: String, output: &Path| {
+            let mut args: Vec<OsString> = ["-y", "-v", "error", "-f", "lavfi", "-i", &input]
+                .map(OsString::from)
+                .into();
+            args.push(output.into());
+            run_tool(&ffmpeg, &args, "ffmpeg").unwrap();
+        };
+        let (mut clips, mut audios) = (Vec::new(), Vec::new());
+        for (index, seconds) in lengths.iter().enumerate() {
+            let clip = dir.join(format!("clip-{index}.mp4"));
+            let secs = plan.clip_secs[index];
+            make(
+                format!("color=size=64x36:rate={FPS}:duration={secs}"),
+                &clip,
+            );
+            clips.push(clip);
+            let audio = dir.join(format!("scene-{index}.mp3"));
+            let (pitch, gain) = (300 + index * 100, index * 6);
+            make(
+                format!("sine=frequency={pitch}:duration={seconds},volume=-{gain}dB"),
+                &audio,
+            );
+            audios.push(audio);
+        }
+        let measured: Vec<Option<Measurement>> = audios
+            .iter()
+            .map(|audio| loudness::measure(&ffmpeg, audio).unwrap())
+            .collect();
+        let video = dir.join("out.mp4");
+        let args = assemble_args(&clips, &audios, &measured, &plan, &video);
+        run_tool(&ffmpeg, &args, "ffmpeg").unwrap();
+        assert!(video.is_file());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Needs ffmpeg and ffprobe: `cargo test -- --ignored`.
