@@ -1,0 +1,18 @@
+Upscayl CLI (upscayl-bin)
+
+This application includes the unmodified upscayl-bin program from the Upscayl project
+and runs it as a separate process to enlarge images.
+
+Licence: GNU Affero General Public License v3.0, see the LICENSE file next to this one.
+It applies to upscayl-bin, not to the rest of this application.
+Version: 20251207-174704 (macOS release binary)
+
+Source code:
+  https://github.com/upscayl/upscayl-ncnn/tree/20251207-174704
+  commit d02fa88e078e7109fd689932453362430144014d
+Its submodules are not part of GitHub's source archives; get them with
+  git clone --recursive --branch 20251207-174704 https://github.com/upscayl/upscayl-ncnn.git
+  - ncnn    https://github.com/Tencent/ncnn          commit 6125c9f47cd14b589de0521350668cf9d3d37e3c
+  - libwebp https://github.com/webmproject/libwebp   commit 8ea81561d2fdd382da60f57958741a7c23a18eb6
+
+Model digital-art-4x: taken unmodified from https://github.com/upscayl/upscayl/tree/v2.15.0/resources/models
