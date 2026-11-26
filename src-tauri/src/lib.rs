@@ -1,11 +1,11 @@
 mod actions;
-mod chat;
+mod audio_queue;
 mod characters;
+mod chat;
 mod claude;
 mod collect;
 mod db;
 mod error;
-mod audio_queue;
 mod image_queue;
 mod media;
 mod media_queue;
@@ -22,8 +22,8 @@ use rusqlite::Connection;
 use tauri::{Emitter, Manager, State};
 
 use db::{Message, Scene, Story, StorySettings};
-use stats::StoryStats;
 use error::AppError;
+use stats::StoryStats;
 
 struct AppState {
     db: Mutex<Connection>,
@@ -40,7 +40,9 @@ impl AppState {
 
 impl AppState {
     fn conn(&self) -> Result<MutexGuard<'_, Connection>, AppError> {
-        self.db.lock().map_err(|_| AppError::new("database lock poisoned"))
+        self.db
+            .lock()
+            .map_err(|_| AppError::new("database lock poisoned"))
     }
 }
 
@@ -81,7 +83,11 @@ fn revision_summary(revision: &db::Revision) -> String {
             .unwrap_or(0);
         return format!("{count} сцен");
     }
-    revision.payload.chars().take(REVISION_PREVIEW_CHARS).collect()
+    revision
+        .payload
+        .chars()
+        .take(REVISION_PREVIEW_CHARS)
+        .collect()
 }
 
 #[derive(serde::Serialize)]
@@ -126,7 +132,11 @@ fn list_stories(state: State<'_, AppState>) -> Result<Vec<Story>, AppError> {
 }
 
 #[tauri::command]
-fn create_story(state: State<'_, AppState>, title: String, text: String) -> Result<Story, AppError> {
+fn create_story(
+    state: State<'_, AppState>,
+    title: String,
+    text: String,
+) -> Result<Story, AppError> {
     let (title, text) = (title.trim(), text.trim());
     if title.is_empty() || text.is_empty() {
         return Err(AppError::new("title and text must not be empty"));
@@ -150,7 +160,11 @@ fn list_profiles(state: State<'_, AppState>) -> ProfilesInfo {
     ProfilesInfo {
         options: profiles::list(&dir)
             .into_iter()
-            .map(|p| ProfileDto { id: p.id, label: p.label, builtin: p.builtin })
+            .map(|p| ProfileDto {
+                id: p.id,
+                label: p.label,
+                builtin: p.builtin,
+            })
             .collect(),
         custom_dir: dir.display().to_string(),
     }
@@ -171,7 +185,11 @@ fn set_story_settings(
     }
     let conn = state.conn()?;
     db::get_story(&conn, id)?;
-    let settings = StorySettings { target_minutes, age_group, profile };
+    let settings = StorySettings {
+        target_minutes,
+        age_group,
+        profile,
+    };
     db::set_story_settings(&conn, id, &settings)?;
     db::delete_session(&conn, id)?;
     load_detail(&conn, id)
@@ -182,7 +200,10 @@ fn get_models(state: State<'_, AppState>) -> Result<ModelsInfo, AppError> {
     Ok(ModelsInfo {
         options: claude::MODELS
             .iter()
-            .map(|m| ModelOptionDto { id: m.id, label: m.label })
+            .map(|m| ModelOptionDto {
+                id: m.id,
+                label: m.label,
+            })
             .collect(),
         selected: selected_model(&*state.conn()?)?,
     })
@@ -259,7 +280,9 @@ fn load_media(state: &AppState, conn: &Connection, story_id: i64) -> Result<Medi
         voices: &media::VOICES,
         speech_credits_per_char: media::SPEECH_CREDITS_PER_CHAR,
         prices_measured_on: media::PRICES_MEASURED_ON,
-        media_dir: media::story_media_dir(&state.workspace, story_id).display().to_string(),
+        media_dir: media::story_media_dir(&state.workspace, story_id)
+            .display()
+            .to_string(),
         assets: media::list_assets(conn, story_id)?,
         references: media::list_references(conn, story_id)?,
         characters: characters::list(conn, story_id)?,
@@ -274,14 +297,22 @@ fn get_media(state: State<'_, AppState>, story_id: i64) -> Result<MediaInfo, App
 }
 
 #[tauri::command]
-fn set_image_model(state: State<'_, AppState>, story_id: i64, model_id: String) -> Result<MediaInfo, AppError> {
+fn set_image_model(
+    state: State<'_, AppState>,
+    story_id: i64,
+    model_id: String,
+) -> Result<MediaInfo, AppError> {
     let conn = state.conn()?;
     media::set_image_model(&conn, story_id, &model_id)?;
     load_media(&state, &conn, story_id)
 }
 
 #[tauri::command]
-fn set_voice(state: State<'_, AppState>, story_id: i64, voice_id: String) -> Result<MediaInfo, AppError> {
+fn set_voice(
+    state: State<'_, AppState>,
+    story_id: i64,
+    voice_id: String,
+) -> Result<MediaInfo, AppError> {
     let conn = state.conn()?;
     media::set_voice(&conn, story_id, &voice_id)?;
     load_media(&state, &conn, story_id)
@@ -346,12 +377,15 @@ async fn estimate_audio_queue(
             let conn = state.conn()?;
             return load_media(&state, &conn, story_id);
         }
-        return Err(AppError::new("no unpriced narration is waiting for this scene"));
+        return Err(AppError::new(
+            "no unpriced narration is waiting for this scene",
+        ));
     }
     let workspace = state.workspace.clone();
-    let estimates = tauri::async_runtime::spawn_blocking(move || audio_queue::estimate(&workspace, &items))
-        .await
-        .map_err(|e| AppError::new(format!("estimate task failed: {e}")))??;
+    let estimates =
+        tauri::async_runtime::spawn_blocking(move || audio_queue::estimate(&workspace, &items))
+            .await
+            .map_err(|e| AppError::new(format!("estimate task failed: {e}")))??;
     let conn = state.conn()?;
     media_queue::save_estimates(&conn, story_id, media::KIND_AUDIO, &estimates)?;
     load_media(&state, &conn, story_id)
@@ -382,7 +416,8 @@ where
         let conn = state.conn()?;
         match started {
             Err(err) => {
-                let message = format!("generation failed, credits may already have been spent: {err}");
+                let message =
+                    format!("generation failed, credits may already have been spent: {err}");
                 media_queue::fail_started(&conn, story_id, kind, &positions, &message)?;
                 return Ok(());
             }
@@ -391,7 +426,10 @@ where
                 let mut failures: Vec<media_queue::ItemResult> = report
                     .failed
                     .iter()
-                    .map(|(position, message)| media_queue::ItemResult { position: *position, saved: Err(message.clone()) })
+                    .map(|(position, message)| media_queue::ItemResult {
+                        position: *position,
+                        saved: Err(message.clone()),
+                    })
                     .collect();
                 for position in &positions {
                     let known = report.started.iter().any(|s| s.position == *position)
@@ -411,7 +449,11 @@ where
 }
 
 /// Collects the generations that were launched and not delivered yet (up to about ten minutes of waiting).
-async fn collect_story(state: &State<'_, AppState>, story_id: i64, kind: &'static str) -> Result<(), AppError> {
+async fn collect_story(
+    state: &State<'_, AppState>,
+    story_id: i64,
+    kind: &'static str,
+) -> Result<(), AppError> {
     let items = {
         let conn = state.conn()?;
         collect::pending_items(&conn, story_id, kind)?
@@ -421,9 +463,11 @@ async fn collect_story(state: &State<'_, AppState>, story_id: i64, kind: &'stati
     }
     let workspace = state.workspace.clone();
     let media_dir = media::story_media_dir(&workspace, story_id);
-    let collection = tauri::async_runtime::spawn_blocking(move || collect::collect_pending(&workspace, &media_dir, kind, items))
-        .await
-        .map_err(|e| AppError::new(format!("collecting task failed: {e}")))?;
+    let collection = tauri::async_runtime::spawn_blocking(move || {
+        collect::collect_pending(&workspace, &media_dir, kind, items)
+    })
+    .await
+    .map_err(|e| AppError::new(format!("collecting task failed: {e}")))?;
     let conn = state.conn()?;
     media_queue::apply_results(&conn, story_id, kind, &collection.finished)
 }
@@ -438,7 +482,11 @@ fn media_kind(kind: &str) -> Result<&'static str, AppError> {
 
 /// Fetches the results of generations that were paid for but not delivered yet. Costs nothing.
 #[tauri::command]
-async fn collect_media(state: State<'_, AppState>, story_id: i64, kind: String) -> Result<MediaInfo, AppError> {
+async fn collect_media(
+    state: State<'_, AppState>,
+    story_id: i64,
+    kind: String,
+) -> Result<MediaInfo, AppError> {
     collect_story(&state, story_id, media_kind(&kind)?).await?;
     let conn = state.conn()?;
     load_media(&state, &conn, story_id)
@@ -446,7 +494,12 @@ async fn collect_media(state: State<'_, AppState>, story_id: i64, kind: String) 
 
 /// Gives up on a paid generation that never arrived, so it can be generated again (and paid for again).
 #[tauri::command]
-fn abandon_generation(state: State<'_, AppState>, story_id: i64, position: i64, kind: String) -> Result<MediaInfo, AppError> {
+fn abandon_generation(
+    state: State<'_, AppState>,
+    story_id: i64,
+    position: i64,
+    kind: String,
+) -> Result<MediaInfo, AppError> {
     let conn = state.conn()?;
     collect::abandon(&conn, story_id, position, media_kind(&kind)?)?;
     load_media(&state, &conn, story_id)
@@ -472,9 +525,13 @@ async fn generate_audio_queue(
         return Err(AppError::new("no narration is queued for generation"));
     }
     let positions: Vec<i64> = items.iter().map(|item| item.position).collect();
-    launch_and_collect(&state, story_id, media::KIND_AUDIO, positions, move |workspace| {
-        audio_queue::start(workspace, &items)
-    })
+    launch_and_collect(
+        &state,
+        story_id,
+        media::KIND_AUDIO,
+        positions,
+        move |workspace| audio_queue::start(workspace, &items),
+    )
     .await?;
     let conn = state.conn()?;
     load_media(&state, &conn, story_id)
@@ -504,9 +561,10 @@ async fn estimate_image_queue(
         return Err(AppError::new("no unpriced image is waiting for this scene"));
     }
     let workspace = state.workspace.clone();
-    let estimates = tauri::async_runtime::spawn_blocking(move || image_queue::estimate(&workspace, &items))
-        .await
-        .map_err(|e| AppError::new(format!("estimate task failed: {e}")))??;
+    let estimates =
+        tauri::async_runtime::spawn_blocking(move || image_queue::estimate(&workspace, &items))
+            .await
+            .map_err(|e| AppError::new(format!("estimate task failed: {e}")))??;
     let conn = state.conn()?;
     media_queue::save_estimates(&conn, story_id, media::KIND_IMAGE, &estimates)?;
     load_media(&state, &conn, story_id)
@@ -540,14 +598,20 @@ async fn generate_image_queue(
         }
         generated_any = true;
         let positions: Vec<i64> = items.iter().map(|item| item.position).collect();
-        launch_and_collect(&state, story_id, media::KIND_IMAGE, positions.clone(), move |workspace| {
-            image_queue::start(workspace, &items)
-        })
+        launch_and_collect(
+            &state,
+            story_id,
+            media::KIND_IMAGE,
+            positions.clone(),
+            move |workspace| image_queue::start(workspace, &items),
+        )
         .await?;
         if anchor_batch {
             let conn = state.conn()?;
             let anchor_done = media::list_assets(&conn, story_id)?.iter().any(|a| {
-                a.kind == media::KIND_IMAGE && a.position == image_queue::ANCHOR_POSITION && a.status == media::STATUS_READY
+                a.kind == media::KIND_IMAGE
+                    && a.position == image_queue::ANCHOR_POSITION
+                    && a.status == media::STATUS_READY
             });
             if !anchor_done {
                 break;
@@ -567,7 +631,10 @@ fn upscale_roots(app: &tauri::AppHandle) -> Vec<PathBuf> {
     if let Ok(dir) = app.path().resource_dir() {
         roots.push(dir);
     }
-    roots.push(PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/resources")));
+    roots.push(PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/resources"
+    )));
     roots
 }
 
@@ -585,7 +652,9 @@ fn images_to_upscale(
         .filter(|a| a.kind == media::KIND_IMAGE && a.status == media::STATUS_READY)
         .filter(|a| position.is_none_or(|p| p == a.position))
         .filter_map(|a| a.file_path.map(|path| (a.position, PathBuf::from(path))))
-        .filter(|(_, path)| path.starts_with(&media_dir) && !upscale::upscaled_path(path, resolution).is_file())
+        .filter(|(_, path)| {
+            path.starts_with(&media_dir) && !upscale::upscaled_path(path, resolution).is_file()
+        })
         .collect())
 }
 
@@ -599,10 +668,16 @@ fn upscale_all(
     let failures: Vec<String> = targets
         .iter()
         .filter_map(|(position, path)| {
-            upscale::upscale(path, resolution, &tools).err().map(|e| format!("scene {position}: {e}"))
+            upscale::upscale(path, resolution, &tools)
+                .err()
+                .map(|e| format!("scene {position}: {e}"))
         })
         .collect();
-    if failures.is_empty() { Ok(()) } else { Err(AppError::new(failures.join("; "))) }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::new(failures.join("; ")))
+    }
 }
 
 /// Upscayl + ffmpeg: writes `<image>-1080p.png` / `-4k.png` next to the finished image(s). Free, local, ~25 s per image.
@@ -642,15 +717,25 @@ fn export_sources(conn: &Connection, story_id: i64) -> Result<Vec<video::SceneSo
     let mut sources = Vec::new();
     let mut missing = Vec::new();
     for scene in db::list_scenes(conn, story_id)? {
-        match (ready_file(scene.position, media::KIND_IMAGE), ready_file(scene.position, media::KIND_AUDIO)) {
-            (Some(image), Some(audio)) => sources.push(video::SceneSource { position: scene.position, image, audio }),
+        match (
+            ready_file(scene.position, media::KIND_IMAGE),
+            ready_file(scene.position, media::KIND_AUDIO),
+        ) {
+            (Some(image), Some(audio)) => sources.push(video::SceneSource {
+                position: scene.position,
+                image,
+                audio,
+            }),
             _ => missing.push(scene.position.to_string()),
         }
     }
     if missing.is_empty() {
         Ok(sources)
     } else {
-        Err(AppError::new(format!("scenes without a finished image or narration: {}", missing.join(", "))))
+        Err(AppError::new(format!(
+            "scenes without a finished image or narration: {}",
+            missing.join(", ")
+        )))
     }
 }
 
@@ -682,7 +767,10 @@ async fn export_video(
     let cancel = Arc::clone(&state.export_cancel);
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         let mut report = |progress| {
-            let _ = app.emit(EXPORT_PROGRESS_EVENT, ExportProgressEvent { story_id, progress });
+            let _ = app.emit(
+                EXPORT_PROGRESS_EVENT,
+                ExportProgressEvent { story_id, progress },
+            );
         };
         video::export(&sources, resolution, &media_dir, &cancel, &mut report)
     })
@@ -705,7 +793,10 @@ fn cancel_export(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-fn request_missing_assets(state: State<'_, AppState>, story_id: i64) -> Result<MediaInfo, AppError> {
+fn request_missing_assets(
+    state: State<'_, AppState>,
+    story_id: i64,
+) -> Result<MediaInfo, AppError> {
     let conn = state.conn()?;
     media::request_missing(&conn, story_id)?;
     load_media(&state, &conn, story_id)
@@ -719,7 +810,8 @@ fn set_scene_reference(
     file_name: String,
     bytes: Vec<u8>,
 ) -> Result<MediaInfo, AppError> {
-    let path = media::save_reference_file(&state.workspace, story_id, position, &file_name, &bytes)?;
+    let path =
+        media::save_reference_file(&state.workspace, story_id, position, &file_name, &bytes)?;
     let new_path = path.display().to_string();
     let conn = state.conn()?;
     let previous = media::set_reference(&conn, story_id, position, &new_path)?;
@@ -759,7 +851,8 @@ async fn generate_character(
     };
     let workspace = state.workspace.clone();
     let dir = characters::character_dir(&workspace, story_id);
-    std::fs::create_dir_all(&dir).map_err(|e| AppError::new(format!("cannot create {}: {e}", dir.display())))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| AppError::new(format!("cannot create {}: {e}", dir.display())))?;
     let item = image_queue::QueuedImage {
         position: characters::GENERATION_POSITION,
         prompt,
@@ -767,22 +860,32 @@ async fn generate_character(
         estimate_credits: None,
         references: Vec::new(),
     };
-    let results = tauri::async_runtime::spawn_blocking(move || image_queue::generate(&workspace, &dir, &[item]))
-        .await
-        .map_err(|e| AppError::new(format!("generation task failed: {e}")))??;
+    let results = tauri::async_runtime::spawn_blocking(move || {
+        image_queue::generate(&workspace, &dir, &[item])
+    })
+    .await
+    .map_err(|e| AppError::new(format!("generation task failed: {e}")))??;
     let saved = results
         .into_iter()
         .next()
         .ok_or_else(|| AppError::new("Claude returned no result for the character"))?
         .saved
-        .map_err(|message| AppError::new(format!("character generation failed, credits may already have been spent: {message}")))?;
+        .map_err(|message| {
+            AppError::new(format!(
+                "character generation failed, credits may already have been spent: {message}"
+            ))
+        })?;
     let conn = state.conn()?;
     characters::adopt_generated(&conn, story_id, &name, std::path::Path::new(&saved.path))?;
     load_media(&state, &conn, story_id)
 }
 
 #[tauri::command]
-fn remove_character(state: State<'_, AppState>, story_id: i64, character_id: i64) -> Result<MediaInfo, AppError> {
+fn remove_character(
+    state: State<'_, AppState>,
+    story_id: i64,
+    character_id: i64,
+) -> Result<MediaInfo, AppError> {
     let conn = state.conn()?;
     if let Some(file) = characters::remove(&conn, story_id, character_id)? {
         let _ = std::fs::remove_file(file);
@@ -804,7 +907,11 @@ fn set_scene_character(
 }
 
 #[tauri::command]
-fn clear_scene_reference(state: State<'_, AppState>, story_id: i64, position: i64) -> Result<MediaInfo, AppError> {
+fn clear_scene_reference(
+    state: State<'_, AppState>,
+    story_id: i64,
+    position: i64,
+) -> Result<MediaInfo, AppError> {
     let conn = state.conn()?;
     if let Some(previous) = media::clear_reference(&conn, story_id, position)? {
         let _ = std::fs::remove_file(previous);
@@ -889,7 +996,11 @@ pub fn run() {
 
             let conn = Connection::open(data_dir.join("audiobooks.db"))?;
             db::init(&conn)?;
-            app.manage(AppState { db: Mutex::new(conn), workspace: data_dir, export_cancel: Arc::new(AtomicBool::new(false)) });
+            app.manage(AppState {
+                db: Mutex::new(conn),
+                workspace: data_dir,
+                export_cancel: Arc::new(AtomicBool::new(false)),
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

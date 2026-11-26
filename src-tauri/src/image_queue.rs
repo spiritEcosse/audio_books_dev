@@ -63,7 +63,11 @@ fn anchor_image(conn: &Connection, story_id: i64) -> Result<Option<PathBuf>, App
 pub fn queued_images(conn: &Connection, story_id: i64) -> Result<Vec<QueuedImage>, AppError> {
     // With characters, their pictures carry the look of the story; the scene 0 anchor would only pull every scene
     // towards the composition and style of that one picture.
-    let anchor = if characters::list(conn, story_id)?.is_empty() { anchor_image(conn, story_id)? } else { None };
+    let anchor = if characters::list(conn, story_id)?.is_empty() {
+        anchor_image(conn, story_id)?
+    } else {
+        None
+    };
     let custom = media::list_references(conn, story_id)?;
     media_queue::queued_rows(conn, story_id, KIND_IMAGE)?
         .into_iter()
@@ -73,7 +77,12 @@ pub fn queued_images(conn: &Connection, story_id: i64) -> Result<Vec<QueuedImage
                 references.extend(anchor.clone());
             }
             references.extend(characters::files_for_scene(conn, story_id, row.position)?);
-            references.extend(custom.iter().filter(|r| r.position == row.position).map(|r| PathBuf::from(&r.file_path)));
+            references.extend(
+                custom
+                    .iter()
+                    .filter(|r| r.position == row.position)
+                    .map(|r| PathBuf::from(&r.file_path)),
+            );
             Ok(QueuedImage {
                 position: row.position,
                 prompt: row.source,
@@ -110,42 +119,77 @@ fn reference_files(items: &[QueuedImage]) -> Vec<ReferenceFile> {
             continue;
         }
         let Some(mime) = mime_for(path) else { continue };
-        let Ok(meta) = std::fs::metadata(path) else { continue };
+        let Ok(meta) = std::fs::metadata(path) else {
+            continue;
+        };
         if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_REFERENCE_UPLOAD_BYTES {
             continue;
         }
-        files.push(ReferenceFile { key: files.len().to_string(), path: path.clone(), mime, size: meta.len() });
+        files.push(ReferenceFile {
+            key: files.len().to_string(),
+            path: path.clone(),
+            mime,
+            size: meta.len(),
+        });
     }
     files
 }
 
 fn keys_of(item: &QueuedImage, files: &[ReferenceFile]) -> Vec<String> {
-    files.iter().filter(|f| item.references.contains(&f.path)).map(|f| f.key.clone()).collect()
+    files
+        .iter()
+        .filter(|f| item.references.contains(&f.path))
+        .map(|f| f.key.clone())
+        .collect()
 }
 
 fn estimate_json(items: &[QueuedImage]) -> Vec<Value> {
-    items.iter().map(|i| json!({ "position": i.position, "prompt": i.prompt, "model_id": i.model_id })).collect()
+    items
+        .iter()
+        .map(|i| json!({ "position": i.position, "prompt": i.prompt, "model_id": i.model_id }))
+        .collect()
 }
 
 /// Exact prices (estimate_only, nothing is charged) for the queued images. References do not change the
 /// price, so none are uploaded. Blocking.
 pub fn estimate(cwd: &Path, items: &[QueuedImage]) -> Result<Vec<(i64, f64)>, AppError> {
-    let prompt = media_queue::items_prompt("Estimate the price of these images", estimate_json(items));
+    let prompt =
+        media_queue::items_prompt("Estimate the price of these images", estimate_json(items));
     let turns = ESTIMATE_BASE_TURNS + TURNS_PER_ITEM * items.len() as u32;
-    let reply = claude::run_connector(cwd, MEDIA_MODEL, ESTIMATE_SYSTEM, &prompt, CONNECTOR_TOOLS, turns)?;
+    let reply = claude::run_connector(
+        cwd,
+        MEDIA_MODEL,
+        ESTIMATE_SYSTEM,
+        &prompt,
+        CONNECTOR_TOOLS,
+        turns,
+    )?;
     let estimates = media_queue::parse_estimates(&reply.text)?;
-    Ok(estimates.into_iter().filter(|(position, _)| items.iter().any(|i| i.position == *position)).collect())
+    Ok(estimates
+        .into_iter()
+        .filter(|(position, _)| items.iter().any(|i| i.position == *position))
+        .collect())
 }
 
 /// Phase 1: Claude opens a flow and upload slots, the app PUTs the files. Returns the flow and (key, asset_id).
-fn upload_references(cwd: &Path, files: &[ReferenceFile]) -> Result<(String, Vec<(String, String)>), AppError> {
+fn upload_references(
+    cwd: &Path,
+    files: &[ReferenceFile],
+) -> Result<(String, Vec<(String, String)>), AppError> {
     let list: Vec<Value> = files
         .iter()
         .map(|f| json!({ "key": f.key, "name": format!("reference-{}", f.key), "mime_type": f.mime, "file_size": f.size }))
         .collect();
     let prompt = media_queue::items_prompt("Create upload slots for these files", list);
     let turns = UPLOAD_BASE_TURNS + TURNS_PER_ITEM * files.len() as u32;
-    let reply = claude::run_connector(cwd, MEDIA_MODEL, UPLOAD_SYSTEM, &prompt, CONNECTOR_TOOLS, turns)?;
+    let reply = claude::run_connector(
+        cwd,
+        MEDIA_MODEL,
+        UPLOAD_SYSTEM,
+        &prompt,
+        CONNECTOR_TOOLS,
+        turns,
+    )?;
     let json = media_queue::extract_json(&reply.text)?;
     let flow_id = json["flow_id"]
         .as_str()
@@ -154,11 +198,18 @@ fn upload_references(cwd: &Path, files: &[ReferenceFile]) -> Result<(String, Vec
         .to_owned();
     let mut assets = Vec::new();
     for file in files {
-        let slot = json["uploads"].as_array().into_iter().flatten().find(|u| u["key"].as_str() == Some(file.key.as_str()));
+        let slot = json["uploads"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|u| u["key"].as_str() == Some(file.key.as_str()));
         let asset_id = slot.and_then(|u| u["asset_id"].as_str());
         let url = slot.and_then(|u| u["upload_url"].as_str());
         let (Some(asset_id), Some(url)) = (asset_id, url) else {
-            return Err(AppError::new(format!("no upload slot was created for reference {}", file.key)));
+            return Err(AppError::new(format!(
+                "no upload slot was created for reference {}",
+                file.key
+            )));
         };
         media_queue::upload(url, &file.path, file.mime)
             .map_err(|e| AppError::new(format!("reference upload failed: {e}")))?;
@@ -177,7 +228,10 @@ pub fn start(cwd: &Path, items: &[QueuedImage]) -> Result<StartReport, AppError>
         let (flow_id, assets) = upload_references(cwd, &files)?;
         (Some(flow_id), assets)
     };
-    let assets_json: Vec<Value> = assets.iter().map(|(key, id)| json!({ "key": key, "asset_id": id })).collect();
+    let assets_json: Vec<Value> = assets
+        .iter()
+        .map(|(key, id)| json!({ "key": key, "asset_id": id }))
+        .collect();
     let items_json: Vec<Value> = items
         .iter()
         .map(|i| json!({ "position": i.position, "prompt": i.prompt, "model_id": i.model_id, "references": keys_of(i, &files) }))
@@ -189,13 +243,24 @@ pub fn start(cwd: &Path, items: &[QueuedImage]) -> Result<StartReport, AppError>
         Value::Array(items_json)
     );
     let turns = collect::START_BASE_TURNS + TURNS_PER_ITEM * (items.len() + assets.len()) as u32;
-    let reply = claude::run_connector(cwd, MEDIA_MODEL, GENERATE_SYSTEM, &prompt, CONNECTOR_TOOLS, turns)?;
+    let reply = claude::run_connector(
+        cwd,
+        MEDIA_MODEL,
+        GENERATE_SYSTEM,
+        &prompt,
+        CONNECTOR_TOOLS,
+        turns,
+    )?;
     collect::parse_started(&reply.text)
 }
 
 /// Starts the generations and waits for them here, without a database (there is no row to keep the ids on), then
 /// downloads the images into `dir`. Spends credits. Blocking, up to about ten minutes of waiting.
-pub fn generate(cwd: &Path, dir: &Path, items: &[QueuedImage]) -> Result<Vec<ItemResult>, AppError> {
+pub fn generate(
+    cwd: &Path,
+    dir: &Path,
+    items: &[QueuedImage],
+) -> Result<Vec<ItemResult>, AppError> {
     let report = start(cwd, items)?;
     let pending: Vec<PendingItem> = report
         .started
@@ -246,21 +311,30 @@ mod tests {
         let mut conn = Connection::open_in_memory().unwrap();
         db::init(&conn).unwrap();
         let story = db::create_story(&conn, "t", "body").unwrap();
-        let scenes = ["a", "b", "c"]
-            .map(|text| NewScene { text: text.into(), image_prompt: format!("prompt {text}") });
+        let scenes = ["a", "b", "c"].map(|text| NewScene {
+            text: text.into(),
+            image_prompt: format!("prompt {text}"),
+        });
         db::replace_scenes(&mut conn, story.id, &scenes).unwrap();
         (conn, story.id)
     }
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("audiobooks-test-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("audiobooks-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
     fn item(position: i64, references: Vec<PathBuf>) -> QueuedImage {
-        QueuedImage { position, prompt: "p".into(), model_id: "m".into(), estimate_credits: None, references }
+        QueuedImage {
+            position,
+            prompt: "p".into(),
+            model_id: "m".into(),
+            estimate_credits: None,
+            references,
+        }
     }
 
     #[test]
@@ -280,10 +354,16 @@ mod tests {
         let items = queued_images(&conn, story).unwrap();
 
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0].references, [PathBuf::from("/m/scene-0-image-v1.webp")]);
+        assert_eq!(
+            items[0].references,
+            [PathBuf::from("/m/scene-0-image-v1.webp")]
+        );
         assert_eq!(
             items[1].references,
-            [PathBuf::from("/m/scene-0-image-v1.webp"), PathBuf::from("/r/owl.png")]
+            [
+                PathBuf::from("/m/scene-0-image-v1.webp"),
+                PathBuf::from("/r/owl.png")
+            ]
         );
     }
 
@@ -293,13 +373,23 @@ mod tests {
         for position in 0..2 {
             media::request_asset(&conn, story, position, KIND_IMAGE).unwrap();
         }
-        conn.execute("UPDATE scene_assets SET file_path = '/m/scene-0-image-v1.webp' WHERE position = 0", []).unwrap();
+        conn.execute(
+            "UPDATE scene_assets SET file_path = '/m/scene-0-image-v1.webp' WHERE position = 0",
+            [],
+        )
+        .unwrap();
 
         let items = queued_images(&conn, story).unwrap();
 
         assert_eq!(items.len(), 2, "both scenes are still queued");
-        assert!(items[0].references.is_empty(), "scene 0 never references itself");
-        assert_eq!(items[1].references, [PathBuf::from("/m/scene-0-image-v1.webp")]);
+        assert!(
+            items[0].references.is_empty(),
+            "scene 0 never references itself"
+        );
+        assert_eq!(
+            items[1].references,
+            [PathBuf::from("/m/scene-0-image-v1.webp")]
+        );
     }
 
     #[test]
@@ -313,8 +403,11 @@ mod tests {
     }
 
     fn add_character_row(conn: &Connection, story: i64, name: &str, path: &str) -> i64 {
-        conn.execute("INSERT INTO story_characters (story_id, name, file_path) VALUES (?1, ?2, ?3)", rusqlite::params![story, name, path])
-            .unwrap();
+        conn.execute(
+            "INSERT INTO story_characters (story_id, name, file_path) VALUES (?1, ?2, ?3)",
+            rusqlite::params![story, name, path],
+        )
+        .unwrap();
         conn.last_insert_rowid()
     }
 
@@ -324,15 +417,30 @@ mod tests {
         for position in 0..3 {
             media::request_asset(&conn, story, position, KIND_IMAGE).unwrap();
         }
-        conn.execute("UPDATE scene_assets SET file_path = '/m/scene-0-image-v1.webp' WHERE position = 0", []).unwrap();
+        conn.execute(
+            "UPDATE scene_assets SET file_path = '/m/scene-0-image-v1.webp' WHERE position = 0",
+            [],
+        )
+        .unwrap();
         conn.execute("INSERT INTO scene_references (story_id, position, file_path) VALUES (?1, 2, '/r/owl.png')", [story]).unwrap();
         add_character_row(&conn, story, "Tembo", "/c/tembo.png");
 
         let items = queued_images(&conn, story).unwrap();
 
-        assert_eq!(items[0].references, [PathBuf::from("/c/tembo.png")], "scene 0 gets the hero too unless it is switched off");
-        assert_eq!(items[1].references, [PathBuf::from("/c/tembo.png")], "no scene 0 anchor once there are characters");
-        assert_eq!(items[2].references, [PathBuf::from("/c/tembo.png"), PathBuf::from("/r/owl.png")]);
+        assert_eq!(
+            items[0].references,
+            [PathBuf::from("/c/tembo.png")],
+            "scene 0 gets the hero too unless it is switched off"
+        );
+        assert_eq!(
+            items[1].references,
+            [PathBuf::from("/c/tembo.png")],
+            "no scene 0 anchor once there are characters"
+        );
+        assert_eq!(
+            items[2].references,
+            [PathBuf::from("/c/tembo.png"), PathBuf::from("/r/owl.png")]
+        );
     }
 
     #[test]
@@ -348,7 +456,10 @@ mod tests {
         let items = queued_images(&conn, story).unwrap();
 
         assert_eq!(items[0].references, [PathBuf::from("/c/owl.png")]);
-        assert_eq!(items[1].references, [PathBuf::from("/c/tembo.png"), PathBuf::from("/c/owl.png")]);
+        assert_eq!(
+            items[1].references,
+            [PathBuf::from("/c/tembo.png"), PathBuf::from("/c/owl.png")]
+        );
     }
 
     #[test]
@@ -367,13 +478,24 @@ mod tests {
             std::fs::write(path, b"x").unwrap();
         }
         let items = [
-            item(1, vec![png.clone(), webp.clone(), text.clone(), dir.join("missing.png")]),
+            item(
+                1,
+                vec![
+                    png.clone(),
+                    webp.clone(),
+                    text.clone(),
+                    dir.join("missing.png"),
+                ],
+            ),
             item(2, vec![png.clone()]),
         ];
 
         let files = reference_files(&items);
 
-        assert_eq!(files.iter().map(|f| f.mime).collect::<Vec<_>>(), ["image/png", "image/webp"]);
+        assert_eq!(
+            files.iter().map(|f| f.mime).collect::<Vec<_>>(),
+            ["image/png", "image/webp"]
+        );
         assert_eq!(keys_of(&items[0], &files), ["0", "1"]);
         assert_eq!(keys_of(&items[1], &files), ["0"]);
     }
@@ -383,7 +505,10 @@ mod tests {
         assert!(GENERATE_SYSTEM.contains("do NOT call creative_get_flow_run_status"));
         assert!(GENERATE_SYSTEM.contains(r#"{"started":[{"position""#));
         assert!(GENERATE_SYSTEM.contains("never retry"));
-        assert!(!GENERATE_SYSTEM.contains("call it again"), "a start run must not poll");
+        assert!(
+            !GENERATE_SYSTEM.contains("call it again"),
+            "a start run must not poll"
+        );
     }
 
     #[test]

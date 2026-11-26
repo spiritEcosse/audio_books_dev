@@ -48,7 +48,9 @@ fn label_from(body: &str, fallback: &str) -> String {
 }
 
 fn load_custom(dir: &Path) -> Vec<Profile> {
-    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
     let mut profiles: Vec<Profile> = entries
         .flatten()
         .filter_map(|entry| {
@@ -58,7 +60,9 @@ fn load_custom(dir: &Path) -> Vec<Profile> {
                 return None;
             }
             if entry.metadata().ok()?.len() > MAX_CUSTOM_PROFILE_BYTES {
-                eprintln!("profile {stem}.md skipped: larger than {MAX_CUSTOM_PROFILE_BYTES} bytes");
+                eprintln!(
+                    "profile {stem}.md skipped: larger than {MAX_CUSTOM_PROFILE_BYTES} bytes"
+                );
                 return None;
             }
             let body = std::fs::read_to_string(&path)
@@ -98,7 +102,8 @@ mod tests {
     use super::*;
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("audiobooks-test-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("audiobooks-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -119,7 +124,11 @@ mod tests {
     #[test]
     fn oversized_custom_profile_is_skipped() {
         let dir = temp_dir("big");
-        std::fs::write(dir.join("huge.md"), "x".repeat(MAX_CUSTOM_PROFILE_BYTES as usize + 1)).unwrap();
+        std::fs::write(
+            dir.join("huge.md"),
+            "x".repeat(MAX_CUSTOM_PROFILE_BYTES as usize + 1),
+        )
+        .unwrap();
         assert!(find(&dir, "custom:huge").is_none());
     }
 

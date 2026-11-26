@@ -55,43 +55,201 @@ pub struct Voice {
 
 /// English narrator voices offered in the picker (from `creative_list_voices`, 2026-11-25).
 pub const VOICES: [Voice; 22] = [
-    Voice { id: FAIRY_TALE_VOICE, label: "Ana-Rita2", description: "Young British Female Voice, Smooth, Expressive, Good for Book Narration", preview_url: "https://storage.googleapis.com/eleven-public-prod/JSdwiNguB8ejxX5k1f64Z6aLdP73/voices/wJqPPQ618aTW29mptyoc/7f5d3985-6999-49c4-8c53-e0f43ef5a334.mp3" },
-    Voice { id: "dPKFsZN0BnPRUfVI2DUW", label: "Ana-Rita3", description: "Young Female; British Accent; Clear Diction; Soft Tone; Excellent for Story Narration", preview_url: "https://storage.googleapis.com/eleven-public-prod/database/user/JSdwiNguB8ejxX5k1f64Z6aLdP73/voices/dPKFsZN0BnPRUfVI2DUW/3b0c53c1-4df8-4863-8cdb-493a50019946.mp3" },
-    Voice { id: "JYUzXNeyCPmymMkfcicu", label: "Jon - Children's Storyteller", description: "Warm American male voice for children's audiobooks, kids' stories, bedtime stories, sleep stories, fairy tales, picture books, and read-alouds.", preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/7bdd69d9e581481a8ea5216493271f81/voices/JYUzXNeyCPmymMkfcicu/bOwbmMjhSIrRt7oyA8vd.mp3" },
-    Voice { id: "wGcFBfKz5yUQqhqr0mVy", label: "Maria Moody | Grandmotherly Storykeeper", description: "As an octogenarian, her voice carries the grace of long living: patience in the pauses, wisdom in the restraint, and kindness that never feels rehearsed.", preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/0933a199cad04cb18ac7e32b9e8476a2/voices/wGcFBfKz5yUQqhqr0mVy/hmDeilAcXODFxnSV2olx.mp3" },
-    Voice { id: "nTMUXLFSfbWmdKKy7nDC", label: "Grandpa Alder", description: "A warm, seasoned old-man voice with gentle rasp, slow-paced wisdom, and a comforting storytelling tone.", preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/66603e0f916e46318897455f0ada6a81/voices/nTMUXLFSfbWmdKKy7nDC/I0FAhCFwCQr54oxJLr1r.mp3" },
-    Voice { id: "JBFqnCBsd6RMkjVDRZzb", label: "George - Warm, Captivating Storyteller", description: "Warm resonance that instantly captivates listeners.", preview_url: "https://api.us.elevenlabs.io/v1/voices/JBFqnCBsd6RMkjVDRZzb/previews/audio?payload=eyJ2b2ljZV9zb3VyY2UiOiJwcmVtYWRlIiwiZmlsZW5hbWUiOiJlNjIwNmQxYS0wNzIxLTQ3ODctYWFmYi0wNmE2ZTcwNWNhYzUubXAzIiwidGltZXN0YW1wIjoxNzk1NjE4ODAwMDAwMDAwfQ%3D%3D" },
-    Voice { id: "G17SuINrv2H9FC6nvetn", label: "Christopher - Gentle and Trustworthy", description: "British male narrator, English, well-spoken, gentle and trustworthy voice. Great for audiobooks, podcasts and voiceovers.", preview_url: "https://storage.googleapis.com/eleven-public-prod/custom/voices/G17SuINrv2H9FC6nvetn/ofEmJDtVvrmeL3OEs0ig.mp3" },
-    Voice { id: DEFAULT_VOICE, label: "Hannibal - British, Natural and Clear", description: "Professional Audiobook Narrator. British. Warm, sophisticated tones.", preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/acd46395ec5b45939dc6833c86bef36a/voices/HLXBCncM2sIxwTmiIZg8/0NrZQUouyWSX4N2IkKDO.mp3" },
-    Voice { id: "VU16byTywsWv5JpI8rbc", label: "Ash - Calm & Magnetic Narrative", description: "A warm, composed male voice with an effortless sense of depth. Calm without sleepy... mysterious without being theatrical.", preview_url: "https://api.us.elevenlabs.io/v1/voices/VU16byTywsWv5JpI8rbc/previews/audio?payload=eyJ2b2ljZV9zb3VyY2UiOiJjdXN0b20iLCJ3b3Jrc3BhY2VfaWQiOiIyNWY2MzVjMjk1MDY0YmRlYmQ5MzNlZWY4MDc5Y2EwNCIsImZpbGVuYW1lIjoieHA2NjlxY3E2V3UzTVRtSkFOOVoubXAzIiwidGltZXN0YW1wIjoxNzk1NjE4ODAwMDAwMDAwfQ%3D%3D" },
-    Voice { id: "SaqYcK3ZpDKBAImA8AdW", label: "JANE DOE", description: "Voice of a young, warm, smooth and friendly woman.Perfect for social media, audiobooks, stories.", preview_url: "https://api.us.elevenlabs.io/v1/voices/SaqYcK3ZpDKBAImA8AdW/previews/audio?payload=eyJ2b2ljZV9zb3VyY2UiOiJjdXN0b20iLCJ3b3Jrc3BhY2VfaWQiOiIzZTM2MTk3MTE5ZTE0MGIzOWZiYmE2MGZkZDRjZTgzZCIsImZpbGVuYW1lIjoiYjdqRUFaZ2k1bmJkak94dlNGNU0ubXAzIiwidGltZXN0YW1wIjoxNzk1NjE4ODAwMDAwMDAwfQ%3D%3D" },
-    Voice { id: "g12yXXabMWeFoLMzxPrF", label: "Julie I", description: "A mature, warm, and soft voice with a calm, reflective, and intimate delivery. Compassionate and gentle, with a soothing presence.", preview_url: "https://api.us.elevenlabs.io/v1/voices/g12yXXabMWeFoLMzxPrF/previews/audio?payload=eyJ2b2ljZV9zb3VyY2UiOiJjdXN0b20iLCJ3b3Jrc3BhY2VfaWQiOiJiMTcwMDI1ZDM2OTI0MTNmOWIyYjQ2ZGVjMjc1ZTc1NCIsImZpbGVuYW1lIjoiYmExYzc1ZWItNzJkNC00N2VkLThjNDUtZjEyMzM1ZWNhYTAxLm1wMyIsInRpbWVzdGFtcCI6MTc5NTYxODgwMDAwMDAwMH0%3D" },
-    Voice { id: "kLhAstPcnnPxqzk6gS5i", label: "Rowan - Gentle, Soft-Spoken & Warm", description: "A calm, natural voice with soft-spoken delivery and clear, even pacing. Ideal for gentle, steady narration and audiobooks.", preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/e2c52f9641c54df8b869fd5d3c9ce4f4/voices/kLhAstPcnnPxqzk6gS5i/xJJZFNzM004Xa0NW2cRX.mp3" },
-    Voice { id: "qSeXEcewz7tA0Q0qk9fH", label: "Victoria - Warm & Relatable Narrator", description: "Conversational and friendly VO for explainer videos, viral social media and modern brand ads. Warm, upbeat, and relatable.", preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/228d4047a7e64c3ca68131d246d93ef2/voices/qSeXEcewz7tA0Q0qk9fH/zDds5EkXR72GXolhj81V.mp3" },
-    Voice { id: "AeRdCCKzvd23BpJoofzx", label: "Nathaniel - Engaging, British and Calm", description: "Nathaniel's voice has already captured the hearts of many on ElevenLabs. Building on that success, we decided to record him again, this time with a mysterious tone.", preview_url: "https://api.us.elevenlabs.io/v1/voices/AeRdCCKzvd23BpJoofzx/previews/audio?payload=eyJ2b2ljZV9zb3VyY2UiOiJjdXN0b20iLCJ3b3Jrc3BhY2VfaWQiOiI1MTRkOTRlOTI0MWM0OGU4Yjc5MDUzNzU3MjljNDM2ZiIsImZpbGVuYW1lIjoiTFI5UURVdjd3VWRGQk41eGtZNUwubXAzIiwidGltZXN0YW1wIjoxNzk1NjE4ODAwMDAwMDAwfQ%3D%3D" },
-    Voice { id: "giAoKpl5weRTCJK7uB9b", label: "Owen – Engaging British Narrator", description: "Trained by the UK's leading broadcaster, this professional British male voice is perfect for engaging storytelling and long-form narration.", preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/f0453fa76e4e4a1e973d87b70665a591/voices/giAoKpl5weRTCJK7uB9b/Yv1QpsmTg5t6ccDghMdi.mp3" },
-    Voice { id: "5cHw2FPV11tjurURIttW", label: "Navira K - Immersive Audiobook Narrator", description: "Captivating, Expressive, Smooth — Navira K reads fiction in English like she already knows the twist and can't wait for you to find it, a female tone that leans in on clues, softens for heartbreak…", preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/514d94e9241c48e8b7905375729c436f/voices/5cHw2FPV11tjurURIttW/jyYO5KP9UbOMgdgLCACj.mp3" },
-    Voice { id: "64BB2AQyI36004WgQGF3", label: "Rouell - Warm, Expressive, Storyteller", description: "A warm, expressive male baritone with a natural, measured cadence. Moves smoothly between calm, atmospheric storytelling, quiet mystery and suspense, raw emotional drama, and conversational dialogue.", preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/8a74f750454646828965079f89f9d3bf/voices/64BB2AQyI36004WgQGF3/IEfxKn7fEyY3dr0em61T.mp3" },
-    Voice { id: "IzVcaH3klbTTKcAKHoLV", label: "Tammy - Expressive, Warm, Versatile", description: "A warm, mature female voice with a distinctive natural South African/British-influenced English accent. A naturally grounded tone and a slightly husky quality.", preview_url: "https://api.us.elevenlabs.io/v1/voices/IzVcaH3klbTTKcAKHoLV/previews/audio?payload=eyJ2b2ljZV9zb3VyY2UiOiJjdXN0b20iLCJ3b3Jrc3BhY2VfaWQiOiI3YTNhODQ3NDFkMzE0NWNkOTRlODU1OTMyYWFjMjc0NiIsImZpbGVuYW1lIjoicGFRaGlqSzE2d2hDZEFRZFE4dk4ubXAzIiwidGltZXN0YW1wIjoxNzk1NjE4ODAwMDAwMDAwfQ%3D%3D" },
-    Voice { id: "cWp9JnUjm1q5tyh8NXZI", label: "Noah - Deep, Narration, Podcast, Calm", description: "Filipino - Deep, charming, narrative and manly. Can be used for vlogging, narration, even podcast.", preview_url: "https://api.us.elevenlabs.io/v1/voices/cWp9JnUjm1q5tyh8NXZI/previews/audio?payload=eyJ2b2ljZV9zb3VyY2UiOiJjdXN0b20iLCJ3b3Jrc3BhY2VfaWQiOiI1NjI2MzI2Mjc0ZWE0MjExYjRlOGRjNmE5NWRhMGI2MiIsImZpbGVuYW1lIjoiZ2s3Q0g1YnFjeVMxUEVsRE9Kd3UubXAzIiwidGltZXN0YW1wIjoxNzk1NjE4ODAwMDAwMDAwfQ%3D%3D" },
-    Voice { id: "bfGb7JTLUnZebZRiFYyq", label: "Adam - Distinct, Deep and Engaging", description: "Distinct tone, deep pitch, engaging long-form voice-over and narration.", preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/b3709ae8839847b6a804736de5e5651c/voices/bfGb7JTLUnZebZRiFYyq/sQiMNu3kolXvAQGhCb2s.mp3" },
-    Voice { id: "SAxJUlDKRc79XAyeWyMu", label: "Morgan - Deep, Powerful, and Confident", description: "This deep, resonant, and warm voice delivers your message with an unhurried, comforting wisdom that instantly builds trust and captivates your audience.", preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/ca3194d2100848df93e780e96d957ab0/voices/SAxJUlDKRc79XAyeWyMu/88f27994-c9e9-49db-9a4c-0dcd375e85da.mp3" },
-    Voice { id: "hpp4J3VqNfWAUOO0d1Us", label: "Bella - Professional, Bright, Warm", description: "This voice is warm, bright, and professional, characterized by a Standard American accent and a polished, narrative quality.", preview_url: "https://storage.googleapis.com/eleven-public-prod/premade/voices/hpp4J3VqNfWAUOO0d1Us/dab0f5ba-3aa4-48a8-9fad-f138fea1126d.mp3" },
+    Voice {
+        id: FAIRY_TALE_VOICE,
+        label: "Ana-Rita2",
+        description: "Young British Female Voice, Smooth, Expressive, Good for Book Narration",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/JSdwiNguB8ejxX5k1f64Z6aLdP73/voices/wJqPPQ618aTW29mptyoc/7f5d3985-6999-49c4-8c53-e0f43ef5a334.mp3",
+    },
+    Voice {
+        id: "dPKFsZN0BnPRUfVI2DUW",
+        label: "Ana-Rita3",
+        description: "Young Female; British Accent; Clear Diction; Soft Tone; Excellent for Story Narration",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/database/user/JSdwiNguB8ejxX5k1f64Z6aLdP73/voices/dPKFsZN0BnPRUfVI2DUW/3b0c53c1-4df8-4863-8cdb-493a50019946.mp3",
+    },
+    Voice {
+        id: "JYUzXNeyCPmymMkfcicu",
+        label: "Jon - Children's Storyteller",
+        description: "Warm American male voice for children's audiobooks, kids' stories, bedtime stories, sleep stories, fairy tales, picture books, and read-alouds.",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/7bdd69d9e581481a8ea5216493271f81/voices/JYUzXNeyCPmymMkfcicu/bOwbmMjhSIrRt7oyA8vd.mp3",
+    },
+    Voice {
+        id: "wGcFBfKz5yUQqhqr0mVy",
+        label: "Maria Moody | Grandmotherly Storykeeper",
+        description: "As an octogenarian, her voice carries the grace of long living: patience in the pauses, wisdom in the restraint, and kindness that never feels rehearsed.",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/0933a199cad04cb18ac7e32b9e8476a2/voices/wGcFBfKz5yUQqhqr0mVy/hmDeilAcXODFxnSV2olx.mp3",
+    },
+    Voice {
+        id: "nTMUXLFSfbWmdKKy7nDC",
+        label: "Grandpa Alder",
+        description: "A warm, seasoned old-man voice with gentle rasp, slow-paced wisdom, and a comforting storytelling tone.",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/66603e0f916e46318897455f0ada6a81/voices/nTMUXLFSfbWmdKKy7nDC/I0FAhCFwCQr54oxJLr1r.mp3",
+    },
+    Voice {
+        id: "JBFqnCBsd6RMkjVDRZzb",
+        label: "George - Warm, Captivating Storyteller",
+        description: "Warm resonance that instantly captivates listeners.",
+        preview_url: "https://api.us.elevenlabs.io/v1/voices/JBFqnCBsd6RMkjVDRZzb/previews/audio?payload=eyJ2b2ljZV9zb3VyY2UiOiJwcmVtYWRlIiwiZmlsZW5hbWUiOiJlNjIwNmQxYS0wNzIxLTQ3ODctYWFmYi0wNmE2ZTcwNWNhYzUubXAzIiwidGltZXN0YW1wIjoxNzk1NjE4ODAwMDAwMDAwfQ%3D%3D",
+    },
+    Voice {
+        id: "G17SuINrv2H9FC6nvetn",
+        label: "Christopher - Gentle and Trustworthy",
+        description: "British male narrator, English, well-spoken, gentle and trustworthy voice. Great for audiobooks, podcasts and voiceovers.",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/custom/voices/G17SuINrv2H9FC6nvetn/ofEmJDtVvrmeL3OEs0ig.mp3",
+    },
+    Voice {
+        id: DEFAULT_VOICE,
+        label: "Hannibal - British, Natural and Clear",
+        description: "Professional Audiobook Narrator. British. Warm, sophisticated tones.",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/acd46395ec5b45939dc6833c86bef36a/voices/HLXBCncM2sIxwTmiIZg8/0NrZQUouyWSX4N2IkKDO.mp3",
+    },
+    Voice {
+        id: "VU16byTywsWv5JpI8rbc",
+        label: "Ash - Calm & Magnetic Narrative",
+        description: "A warm, composed male voice with an effortless sense of depth. Calm without sleepy... mysterious without being theatrical.",
+        preview_url: "https://api.us.elevenlabs.io/v1/voices/VU16byTywsWv5JpI8rbc/previews/audio?payload=eyJ2b2ljZV9zb3VyY2UiOiJjdXN0b20iLCJ3b3Jrc3BhY2VfaWQiOiIyNWY2MzVjMjk1MDY0YmRlYmQ5MzNlZWY4MDc5Y2EwNCIsImZpbGVuYW1lIjoieHA2NjlxY3E2V3UzTVRtSkFOOVoubXAzIiwidGltZXN0YW1wIjoxNzk1NjE4ODAwMDAwMDAwfQ%3D%3D",
+    },
+    Voice {
+        id: "SaqYcK3ZpDKBAImA8AdW",
+        label: "JANE DOE",
+        description: "Voice of a young, warm, smooth and friendly woman.Perfect for social media, audiobooks, stories.",
+        preview_url: "https://api.us.elevenlabs.io/v1/voices/SaqYcK3ZpDKBAImA8AdW/previews/audio?payload=eyJ2b2ljZV9zb3VyY2UiOiJjdXN0b20iLCJ3b3Jrc3BhY2VfaWQiOiIzZTM2MTk3MTE5ZTE0MGIzOWZiYmE2MGZkZDRjZTgzZCIsImZpbGVuYW1lIjoiYjdqRUFaZ2k1bmJkak94dlNGNU0ubXAzIiwidGltZXN0YW1wIjoxNzk1NjE4ODAwMDAwMDAwfQ%3D%3D",
+    },
+    Voice {
+        id: "g12yXXabMWeFoLMzxPrF",
+        label: "Julie I",
+        description: "A mature, warm, and soft voice with a calm, reflective, and intimate delivery. Compassionate and gentle, with a soothing presence.",
+        preview_url: "https://api.us.elevenlabs.io/v1/voices/g12yXXabMWeFoLMzxPrF/previews/audio?payload=eyJ2b2ljZV9zb3VyY2UiOiJjdXN0b20iLCJ3b3Jrc3BhY2VfaWQiOiJiMTcwMDI1ZDM2OTI0MTNmOWIyYjQ2ZGVjMjc1ZTc1NCIsImZpbGVuYW1lIjoiYmExYzc1ZWItNzJkNC00N2VkLThjNDUtZjEyMzM1ZWNhYTAxLm1wMyIsInRpbWVzdGFtcCI6MTc5NTYxODgwMDAwMDAwMH0%3D",
+    },
+    Voice {
+        id: "kLhAstPcnnPxqzk6gS5i",
+        label: "Rowan - Gentle, Soft-Spoken & Warm",
+        description: "A calm, natural voice with soft-spoken delivery and clear, even pacing. Ideal for gentle, steady narration and audiobooks.",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/e2c52f9641c54df8b869fd5d3c9ce4f4/voices/kLhAstPcnnPxqzk6gS5i/xJJZFNzM004Xa0NW2cRX.mp3",
+    },
+    Voice {
+        id: "qSeXEcewz7tA0Q0qk9fH",
+        label: "Victoria - Warm & Relatable Narrator",
+        description: "Conversational and friendly VO for explainer videos, viral social media and modern brand ads. Warm, upbeat, and relatable.",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/228d4047a7e64c3ca68131d246d93ef2/voices/qSeXEcewz7tA0Q0qk9fH/zDds5EkXR72GXolhj81V.mp3",
+    },
+    Voice {
+        id: "AeRdCCKzvd23BpJoofzx",
+        label: "Nathaniel - Engaging, British and Calm",
+        description: "Nathaniel's voice has already captured the hearts of many on ElevenLabs. Building on that success, we decided to record him again, this time with a mysterious tone.",
+        preview_url: "https://api.us.elevenlabs.io/v1/voices/AeRdCCKzvd23BpJoofzx/previews/audio?payload=eyJ2b2ljZV9zb3VyY2UiOiJjdXN0b20iLCJ3b3Jrc3BhY2VfaWQiOiI1MTRkOTRlOTI0MWM0OGU4Yjc5MDUzNzU3MjljNDM2ZiIsImZpbGVuYW1lIjoiTFI5UURVdjd3VWRGQk41eGtZNUwubXAzIiwidGltZXN0YW1wIjoxNzk1NjE4ODAwMDAwMDAwfQ%3D%3D",
+    },
+    Voice {
+        id: "giAoKpl5weRTCJK7uB9b",
+        label: "Owen – Engaging British Narrator",
+        description: "Trained by the UK's leading broadcaster, this professional British male voice is perfect for engaging storytelling and long-form narration.",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/f0453fa76e4e4a1e973d87b70665a591/voices/giAoKpl5weRTCJK7uB9b/Yv1QpsmTg5t6ccDghMdi.mp3",
+    },
+    Voice {
+        id: "5cHw2FPV11tjurURIttW",
+        label: "Navira K - Immersive Audiobook Narrator",
+        description: "Captivating, Expressive, Smooth — Navira K reads fiction in English like she already knows the twist and can't wait for you to find it, a female tone that leans in on clues, softens for heartbreak…",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/514d94e9241c48e8b7905375729c436f/voices/5cHw2FPV11tjurURIttW/jyYO5KP9UbOMgdgLCACj.mp3",
+    },
+    Voice {
+        id: "64BB2AQyI36004WgQGF3",
+        label: "Rouell - Warm, Expressive, Storyteller",
+        description: "A warm, expressive male baritone with a natural, measured cadence. Moves smoothly between calm, atmospheric storytelling, quiet mystery and suspense, raw emotional drama, and conversational dialogue.",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/8a74f750454646828965079f89f9d3bf/voices/64BB2AQyI36004WgQGF3/IEfxKn7fEyY3dr0em61T.mp3",
+    },
+    Voice {
+        id: "IzVcaH3klbTTKcAKHoLV",
+        label: "Tammy - Expressive, Warm, Versatile",
+        description: "A warm, mature female voice with a distinctive natural South African/British-influenced English accent. A naturally grounded tone and a slightly husky quality.",
+        preview_url: "https://api.us.elevenlabs.io/v1/voices/IzVcaH3klbTTKcAKHoLV/previews/audio?payload=eyJ2b2ljZV9zb3VyY2UiOiJjdXN0b20iLCJ3b3Jrc3BhY2VfaWQiOiI3YTNhODQ3NDFkMzE0NWNkOTRlODU1OTMyYWFjMjc0NiIsImZpbGVuYW1lIjoicGFRaGlqSzE2d2hDZEFRZFE4dk4ubXAzIiwidGltZXN0YW1wIjoxNzk1NjE4ODAwMDAwMDAwfQ%3D%3D",
+    },
+    Voice {
+        id: "cWp9JnUjm1q5tyh8NXZI",
+        label: "Noah - Deep, Narration, Podcast, Calm",
+        description: "Filipino - Deep, charming, narrative and manly. Can be used for vlogging, narration, even podcast.",
+        preview_url: "https://api.us.elevenlabs.io/v1/voices/cWp9JnUjm1q5tyh8NXZI/previews/audio?payload=eyJ2b2ljZV9zb3VyY2UiOiJjdXN0b20iLCJ3b3Jrc3BhY2VfaWQiOiI1NjI2MzI2Mjc0ZWE0MjExYjRlOGRjNmE5NWRhMGI2MiIsImZpbGVuYW1lIjoiZ2s3Q0g1YnFjeVMxUEVsRE9Kd3UubXAzIiwidGltZXN0YW1wIjoxNzk1NjE4ODAwMDAwMDAwfQ%3D%3D",
+    },
+    Voice {
+        id: "bfGb7JTLUnZebZRiFYyq",
+        label: "Adam - Distinct, Deep and Engaging",
+        description: "Distinct tone, deep pitch, engaging long-form voice-over and narration.",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/b3709ae8839847b6a804736de5e5651c/voices/bfGb7JTLUnZebZRiFYyq/sQiMNu3kolXvAQGhCb2s.mp3",
+    },
+    Voice {
+        id: "SAxJUlDKRc79XAyeWyMu",
+        label: "Morgan - Deep, Powerful, and Confident",
+        description: "This deep, resonant, and warm voice delivers your message with an unhurried, comforting wisdom that instantly builds trust and captivates your audience.",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/database/workspace/ca3194d2100848df93e780e96d957ab0/voices/SAxJUlDKRc79XAyeWyMu/88f27994-c9e9-49db-9a4c-0dcd375e85da.mp3",
+    },
+    Voice {
+        id: "hpp4J3VqNfWAUOO0d1Us",
+        label: "Bella - Professional, Bright, Warm",
+        description: "This voice is warm, bright, and professional, characterized by a Standard American accent and a polished, narrative quality.",
+        preview_url: "https://storage.googleapis.com/eleven-public-prod/premade/voices/hpp4J3VqNfWAUOO0d1Us/dab0f5ba-3aa4-48a8-9fad-f138fea1126d.mp3",
+    },
 ];
 
 pub const IMAGE_MODELS: [ImageModel; 12] = [
-    ImageModel { id: "bytedance-seedream-5.5", label: "Seedream 5.5", credits: 98.2 },
-    ImageModel { id: "krea-3", label: "Krea 3", credits: 150.9 },
-    ImageModel { id: "gpt-image-2", label: "GPT Image 2", credits: 184.6 },
-    ImageModel { id: "gpt-image-2.5-sunburst", label: "GPT Image 2.5 Sunburst", credits: 190.4 },
-    ImageModel { id: "bytedance-seedream-5-lite", label: "Seedream 5 Lite", credits: 212.1 },
-    ImageModel { id: "recraft-v4.1", label: "Recraft V4.1", credits: 242.4 },
-    ImageModel { id: "gemini-2.5-flash-image", label: "Nano Banana", credits: 251.5 },
-    ImageModel { id: "flux-2-pro", label: "FLUX.2 Pro", credits: 272.7 },
-    ImageModel { id: "flux-3-image", label: "FLUX 3 Image", credits: 290.9 },
-    ImageModel { id: "ideogram-4.6", label: "Ideogram 4.6", credits: 363.6 },
-    ImageModel { id: "gemini-3.1-flash-image", label: "Nano Banana 2", credits: 406.0 },
-    ImageModel { id: "gemini-3-pro-image", label: "Nano Banana Pro", credits: 1218.1 },
+    ImageModel {
+        id: "bytedance-seedream-5.5",
+        label: "Seedream 5.5",
+        credits: 98.2,
+    },
+    ImageModel {
+        id: "krea-3",
+        label: "Krea 3",
+        credits: 150.9,
+    },
+    ImageModel {
+        id: "gpt-image-2",
+        label: "GPT Image 2",
+        credits: 184.6,
+    },
+    ImageModel {
+        id: "gpt-image-2.5-sunburst",
+        label: "GPT Image 2.5 Sunburst",
+        credits: 190.4,
+    },
+    ImageModel {
+        id: "bytedance-seedream-5-lite",
+        label: "Seedream 5 Lite",
+        credits: 212.1,
+    },
+    ImageModel {
+        id: "recraft-v4.1",
+        label: "Recraft V4.1",
+        credits: 242.4,
+    },
+    ImageModel {
+        id: "gemini-2.5-flash-image",
+        label: "Nano Banana",
+        credits: 251.5,
+    },
+    ImageModel {
+        id: "flux-2-pro",
+        label: "FLUX.2 Pro",
+        credits: 272.7,
+    },
+    ImageModel {
+        id: "flux-3-image",
+        label: "FLUX 3 Image",
+        credits: 290.9,
+    },
+    ImageModel {
+        id: "ideogram-4.6",
+        label: "Ideogram 4.6",
+        credits: 363.6,
+    },
+    ImageModel {
+        id: "gemini-3.1-flash-image",
+        label: "Nano Banana 2",
+        credits: 406.0,
+    },
+    ImageModel {
+        id: "gemini-3-pro-image",
+        label: "Nano Banana Pro",
+        credits: 1218.1,
+    },
 ];
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -141,9 +299,11 @@ pub fn default_voice_for(profile: &str) -> &'static str {
 /// The story's narration voice: the saved choice, else the default for its writing profile.
 pub fn voice_id(conn: &Connection, story_id: i64) -> Result<String, AppError> {
     let stored: Option<String> = conn
-        .query_row("SELECT voice_id FROM story_media WHERE story_id = ?1", [story_id], |row| {
-            row.get::<_, Option<String>>(0)
-        })
+        .query_row(
+            "SELECT voice_id FROM story_media WHERE story_id = ?1",
+            [story_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
         .optional()?
         .flatten();
     if let Some(id) = stored.filter(|id| is_known_voice(id)) {
@@ -172,9 +332,11 @@ pub fn story_media_dir(workspace: &Path, story_id: i64) -> PathBuf {
 
 pub fn image_model(conn: &Connection, story_id: i64) -> Result<String, AppError> {
     let stored: Option<String> = conn
-        .query_row("SELECT image_model FROM story_media WHERE story_id = ?1", [story_id], |row| {
-            row.get::<_, Option<String>>(0)
-        })
+        .query_row(
+            "SELECT image_model FROM story_media WHERE story_id = ?1",
+            [story_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
         .optional()?
         .flatten();
     Ok(stored
@@ -203,17 +365,31 @@ fn model_for(conn: &Connection, story_id: i64, kind: &str) -> Result<String, App
     }
 }
 
-fn scene_source(conn: &Connection, story_id: i64, position: i64, kind: &str) -> Result<String, AppError> {
+fn scene_source(
+    conn: &Connection,
+    story_id: i64,
+    position: i64,
+    kind: &str,
+) -> Result<String, AppError> {
     let scene = db::list_scenes(conn, story_id)?
         .into_iter()
         .find(|scene| scene.position == position)
         .ok_or_else(|| AppError::new(format!("scene {position} not found")))?;
-    Ok(if kind == KIND_IMAGE { scene.image_prompt } else { scene.text })
+    Ok(if kind == KIND_IMAGE {
+        scene.image_prompt
+    } else {
+        scene.text
+    })
 }
 
 /// Queues (or re-queues) generation of one scene asset. An existing file stays visible until
 /// the new one replaces it.
-pub fn request_asset(conn: &Connection, story_id: i64, position: i64, kind: &str) -> Result<(), AppError> {
+pub fn request_asset(
+    conn: &Connection,
+    story_id: i64,
+    position: i64,
+    kind: &str,
+) -> Result<(), AppError> {
     if !KINDS.contains(&kind) {
         return Err(AppError::new(format!("unknown asset kind: {kind}")));
     }
@@ -230,7 +406,11 @@ pub fn request_asset(conn: &Connection, story_id: i64, position: i64, kind: &str
     }
     let source = scene_source(conn, story_id, position, kind)?;
     let model = model_for(conn, story_id, kind)?;
-    let voice = if kind == KIND_AUDIO { Some(voice_id(conn, story_id)?) } else { None };
+    let voice = if kind == KIND_AUDIO {
+        Some(voice_id(conn, story_id)?)
+    } else {
+        None
+    };
     conn.execute(
         "INSERT INTO scene_assets (story_id, position, kind, status, source, model_id, voice_id)
          VALUES (?1, ?2, ?3, 'requested', ?4, ?5, ?6)
@@ -242,22 +422,37 @@ pub fn request_asset(conn: &Connection, story_id: i64, position: i64, kind: &str
     Ok(())
 }
 
-fn cancel_matching(conn: &Connection, story_id: i64, position: Option<i64>, kind: Option<&str>) -> Result<(), AppError> {
+fn cancel_matching(
+    conn: &Connection,
+    story_id: i64,
+    position: Option<i64>,
+    kind: Option<&str>,
+) -> Result<(), AppError> {
     let scope = "story_id = ?1 AND (?2 IS NULL OR position = ?2) AND (?3 IS NULL OR kind = ?3)
                  AND status = 'requested' AND started_at IS NULL";
     let args = params![story_id, position, kind];
     // The request replaced a ready file: keep the file, but its source is unknown, so it reads as outdated.
     conn.execute(
-        &format!("UPDATE scene_assets SET status = 'ready', source = '', estimate_credits = NULL,
-                  updated_at = CURRENT_TIMESTAMP WHERE {scope} AND file_path IS NOT NULL"),
+        &format!(
+            "UPDATE scene_assets SET status = 'ready', source = '', estimate_credits = NULL,
+                  updated_at = CURRENT_TIMESTAMP WHERE {scope} AND file_path IS NOT NULL"
+        ),
         args,
     )?;
-    conn.execute(&format!("DELETE FROM scene_assets WHERE {scope} AND file_path IS NULL"), args)?;
+    conn.execute(
+        &format!("DELETE FROM scene_assets WHERE {scope} AND file_path IS NULL"),
+        args,
+    )?;
     Ok(())
 }
 
 /// Takes one queued request back out of the queue. Generation already running is left alone.
-pub fn cancel_request(conn: &Connection, story_id: i64, position: i64, kind: &str) -> Result<(), AppError> {
+pub fn cancel_request(
+    conn: &Connection,
+    story_id: i64,
+    position: i64,
+    kind: &str,
+) -> Result<(), AppError> {
     cancel_matching(conn, story_id, Some(position), Some(kind))
 }
 
@@ -275,7 +470,8 @@ pub fn request_missing(conn: &Connection, story_id: i64) -> Result<usize, AppErr
             let covered = assets.iter().any(|asset| {
                 asset.position == scene.position
                     && asset.kind == kind
-                    && (asset.status == STATUS_REQUESTED || (asset.status == STATUS_READY && !asset.stale))
+                    && (asset.status == STATUS_REQUESTED
+                        || (asset.status == STATUS_READY && !asset.stale))
             });
             if !covered {
                 request_asset(conn, story_id, scene.position, kind)?;
@@ -339,7 +535,11 @@ pub fn set_reference(
 }
 
 /// Removes the custom reference of a scene; returns its file so the caller can delete it.
-pub fn clear_reference(conn: &Connection, story_id: i64, position: i64) -> Result<Option<String>, AppError> {
+pub fn clear_reference(
+    conn: &Connection,
+    story_id: i64,
+    position: i64,
+) -> Result<Option<String>, AppError> {
     let previous: Option<String> = conn
         .query_row(
             "SELECT file_path FROM scene_references WHERE story_id = ?1 AND position = ?2",
@@ -359,7 +559,10 @@ pub fn list_references(conn: &Connection, story_id: i64) -> Result<Vec<SceneRefe
         "SELECT position, file_path FROM scene_references WHERE story_id = ?1 ORDER BY position",
     )?;
     let rows = stmt.query_map([story_id], |row| {
-        Ok(SceneReference { position: row.get(0)?, file_path: row.get(1)? })
+        Ok(SceneReference {
+            position: row.get(0)?,
+            file_path: row.get(1)?,
+        })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
@@ -409,8 +612,14 @@ mod tests {
         db::init(&conn).unwrap();
         let story = db::create_story(&conn, "t", "body").unwrap();
         let scenes = [
-            NewScene { text: "one".into(), image_prompt: "fox".into() },
-            NewScene { text: "two".into(), image_prompt: "owl".into() },
+            NewScene {
+                text: "one".into(),
+                image_prompt: "fox".into(),
+            },
+            NewScene {
+                text: "two".into(),
+                image_prompt: "owl".into(),
+            },
         ];
         db::replace_scenes(&mut conn, story.id, &scenes).unwrap();
         (conn, story.id)
@@ -439,13 +648,24 @@ mod tests {
     fn cancelling_a_re_request_keeps_the_old_file_marked_outdated() {
         let (conn, story) = setup();
         request_asset(&conn, story, 0, KIND_AUDIO).unwrap();
-        conn.execute("UPDATE scene_assets SET status = 'ready', file_path = '/a.mp3'", []).unwrap();
+        conn.execute(
+            "UPDATE scene_assets SET status = 'ready', file_path = '/a.mp3'",
+            [],
+        )
+        .unwrap();
         request_asset(&conn, story, 0, KIND_AUDIO).unwrap();
 
         cancel_request(&conn, story, 0, KIND_AUDIO).unwrap();
 
         let asset = &list_assets(&conn, story).unwrap()[0];
-        assert_eq!((asset.status.as_str(), asset.file_path.as_deref(), asset.stale), ("ready", Some("/a.mp3"), true));
+        assert_eq!(
+            (
+                asset.status.as_str(),
+                asset.file_path.as_deref(),
+                asset.stale
+            ),
+            ("ready", Some("/a.mp3"), true)
+        );
     }
 
     #[test]
@@ -453,7 +673,11 @@ mod tests {
         let (conn, story) = setup();
         request_asset(&conn, story, 0, KIND_AUDIO).unwrap();
         request_asset(&conn, story, 1, KIND_AUDIO).unwrap();
-        conn.execute("UPDATE scene_assets SET started_at = CURRENT_TIMESTAMP WHERE position = 0", []).unwrap();
+        conn.execute(
+            "UPDATE scene_assets SET started_at = CURRENT_TIMESTAMP WHERE position = 0",
+            [],
+        )
+        .unwrap();
 
         cancel_queue(&conn, story).unwrap();
 
@@ -473,7 +697,10 @@ mod tests {
     fn asset_becomes_stale_when_scene_text_changes() {
         let (mut conn, story) = setup();
         request_asset(&conn, story, 0, KIND_AUDIO).unwrap();
-        let edited = [NewScene { text: "changed".into(), image_prompt: "fox".into() }];
+        let edited = [NewScene {
+            text: "changed".into(),
+            image_prompt: "fox".into(),
+        }];
         db::replace_scenes(&mut conn, story, &edited).unwrap();
         assert!(list_assets(&conn, story).unwrap()[0].stale);
     }
@@ -482,7 +709,10 @@ mod tests {
     fn asset_of_a_removed_scene_is_stale() {
         let (mut conn, story) = setup();
         request_asset(&conn, story, 1, KIND_IMAGE).unwrap();
-        let only_first = [NewScene { text: "one".into(), image_prompt: "fox".into() }];
+        let only_first = [NewScene {
+            text: "one".into(),
+            image_prompt: "fox".into(),
+        }];
         db::replace_scenes(&mut conn, story, &only_first).unwrap();
         assert!(list_assets(&conn, story).unwrap()[0].stale);
     }
@@ -506,8 +736,15 @@ mod tests {
     fn re_request_clears_a_previous_estimate() {
         let (conn, story) = setup();
         request_asset(&conn, story, 0, KIND_AUDIO).unwrap();
-        conn.execute("UPDATE scene_assets SET estimate_credits = 321.5 WHERE story_id = ?1", [story]).unwrap();
-        assert_eq!(list_assets(&conn, story).unwrap()[0].estimate_credits, Some(321.5));
+        conn.execute(
+            "UPDATE scene_assets SET estimate_credits = 321.5 WHERE story_id = ?1",
+            [story],
+        )
+        .unwrap();
+        assert_eq!(
+            list_assets(&conn, story).unwrap()[0].estimate_credits,
+            Some(321.5)
+        );
         request_asset(&conn, story, 0, KIND_AUDIO).unwrap();
         assert_eq!(list_assets(&conn, story).unwrap()[0].estimate_credits, None);
     }
@@ -517,9 +754,17 @@ mod tests {
         let (conn, story) = setup();
         request_asset(&conn, story, 0, KIND_IMAGE).unwrap();
         assert!(!list_assets(&conn, story).unwrap()[0].in_progress);
-        conn.execute("UPDATE scene_assets SET started_at = CURRENT_TIMESTAMP WHERE story_id = ?1", [story]).unwrap();
+        conn.execute(
+            "UPDATE scene_assets SET started_at = CURRENT_TIMESTAMP WHERE story_id = ?1",
+            [story],
+        )
+        .unwrap();
         assert!(list_assets(&conn, story).unwrap()[0].in_progress);
-        conn.execute("UPDATE scene_assets SET status = 'ready' WHERE story_id = ?1", [story]).unwrap();
+        conn.execute(
+            "UPDATE scene_assets SET status = 'ready' WHERE story_id = ?1",
+            [story],
+        )
+        .unwrap();
         assert!(!list_assets(&conn, story).unwrap()[0].in_progress);
         request_asset(&conn, story, 0, KIND_IMAGE).unwrap();
         assert!(!list_assets(&conn, story).unwrap()[0].in_progress);
@@ -546,20 +791,33 @@ mod tests {
     fn reference_roundtrip_returns_previous_file() {
         let (conn, story) = setup();
         assert_eq!(set_reference(&conn, story, 0, "/a.png").unwrap(), None);
-        assert_eq!(set_reference(&conn, story, 0, "/b.png").unwrap().as_deref(), Some("/a.png"));
+        assert_eq!(
+            set_reference(&conn, story, 0, "/b.png").unwrap().as_deref(),
+            Some("/a.png")
+        );
         assert_eq!(list_references(&conn, story).unwrap().len(), 1);
-        assert_eq!(clear_reference(&conn, story, 0).unwrap().as_deref(), Some("/b.png"));
+        assert_eq!(
+            clear_reference(&conn, story, 0).unwrap().as_deref(),
+            Some("/b.png")
+        );
         assert!(list_references(&conn, story).unwrap().is_empty());
     }
 
     #[test]
     fn voice_defaults_by_profile_and_can_be_overridden() {
         let (conn, story) = setup();
-        let default_profile = db::get_story_settings(&conn, story, profiles::DEFAULT_PROFILE).unwrap();
-        let fairy = db::StorySettings { profile: FAIRY_TALE_PROFILE.into(), ..default_profile.clone() };
+        let default_profile =
+            db::get_story_settings(&conn, story, profiles::DEFAULT_PROFILE).unwrap();
+        let fairy = db::StorySettings {
+            profile: FAIRY_TALE_PROFILE.into(),
+            ..default_profile.clone()
+        };
         db::set_story_settings(&conn, story, &fairy).unwrap();
         assert_eq!(voice_id(&conn, story).unwrap(), FAIRY_TALE_VOICE);
-        let novel = db::StorySettings { profile: "novel".into(), ..default_profile };
+        let novel = db::StorySettings {
+            profile: "novel".into(),
+            ..default_profile
+        };
         db::set_story_settings(&conn, story, &novel).unwrap();
         assert_eq!(voice_id(&conn, story).unwrap(), DEFAULT_VOICE);
         set_voice(&conn, story, "dPKFsZN0BnPRUfVI2DUW").unwrap();
@@ -573,7 +831,11 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), VOICES.len());
-        assert!(VOICES.iter().all(|v| v.preview_url.starts_with("https://") && !v.description.is_empty()));
+        assert!(
+            VOICES
+                .iter()
+                .all(|v| v.preview_url.starts_with("https://") && !v.description.is_empty())
+        );
         assert!(is_known_voice(FAIRY_TALE_VOICE) && is_known_voice(DEFAULT_VOICE));
     }
 
@@ -585,7 +847,10 @@ mod tests {
         let assets = list_assets(&conn, story).unwrap();
         let audio = assets.iter().find(|a| a.kind == KIND_AUDIO).unwrap();
         let image = assets.iter().find(|a| a.kind == KIND_IMAGE).unwrap();
-        assert_eq!(audio.voice_id.as_deref(), Some(voice_id(&conn, story).unwrap().as_str()));
+        assert_eq!(
+            audio.voice_id.as_deref(),
+            Some(voice_id(&conn, story).unwrap().as_str())
+        );
         assert_eq!(image.voice_id, None);
     }
 

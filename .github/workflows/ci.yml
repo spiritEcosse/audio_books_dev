@@ -6,14 +6,27 @@ on:
   # Also on main, so that pull requests can reuse its Rust cache.
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# A newer push makes an older, still running check of the same branch pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  checks:
+  verify:
+    name: Verify
+    uses: ./.github/workflows/checks.yml
+
+  # Runs only when the checks passed.
+  build:
+    name: Build app (macOS)
+    needs: verify
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -28,7 +41,22 @@ jobs:
         with:
           workspaces: src-tauri
       - run: pnpm install --frozen-lockfile
-      # Must run before cargo: Tauri embeds dist/ at compile time.
-      - run: pnpm build
-      - run: cargo test --locked
-        working-directory: src-tauri
+      - run: scripts/fetch-upscayl.sh
+      - run: pnpm tauri build --bundles app
+      # tar keeps the executable bits that a plain artifact upload drops.
+      - run: tar -czf "$RUNNER_TEMP/audiobooks-macos.tar.gz" -C src-tauri/target/release/bundle/macos .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audiobooks-macos
+          path: ${{ runner.temp }}/audiobooks-macos.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  # The one status branch protection requires. `always()`: a skipped required job would count as passed.
+  checks:
+    name: checks
+    needs: [verify, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.verify.result }}" = success && test "${{ needs.build.result }}" = success

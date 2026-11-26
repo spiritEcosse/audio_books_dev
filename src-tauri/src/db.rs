@@ -173,12 +173,22 @@ const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Adds a column to a table created by an older build (there is no migration framework).
 /// Callers pass compile-time constants only.
-fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<(), AppError> {
+fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), AppError> {
     let exists = conn
-        .prepare(&format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"))?
+        .prepare(&format!(
+            "SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"
+        ))?
         .exists([column])?;
     if !exists {
-        conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"), [])?;
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+            [],
+        )?;
     }
     Ok(())
 }
@@ -306,7 +316,9 @@ pub fn list_messages(conn: &Connection, story_id: i64) -> Result<Vec<Message>, A
             role: row.get(1)?,
             content: row.get(2)?,
             scenes_changed: row.get(3)?,
-            proposal: text.zip(state).map(|(text, state)| Proposal { text, state }),
+            proposal: text
+                .zip(state)
+                .map(|(text, state)| Proposal { text, state }),
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -326,22 +338,41 @@ pub fn get_proposal(conn: &Connection, message_id: i64) -> Result<(i64, Proposal
         "SELECT m.story_id, p.text, p.state FROM proposals p
          JOIN messages m ON m.id = p.message_id WHERE p.message_id = ?1",
         [message_id],
-        |row| Ok((row.get(0)?, Proposal { text: row.get(1)?, state: row.get(2)? })),
+        |row| {
+            Ok((
+                row.get(0)?,
+                Proposal {
+                    text: row.get(1)?,
+                    state: row.get(2)?,
+                },
+            ))
+        },
     )
     .map_err(|_| AppError::new(format!("proposal for message {message_id} not found")))
 }
 
 pub fn set_proposal_state(conn: &Connection, message_id: i64, state: &str) -> Result<(), AppError> {
-    conn.execute("UPDATE proposals SET state = ?2 WHERE message_id = ?1", params![message_id, state])?;
+    conn.execute(
+        "UPDATE proposals SET state = ?2 WHERE message_id = ?1",
+        params![message_id, state],
+    )?;
     Ok(())
 }
 
 pub fn update_story_text(conn: &Connection, story_id: i64, text: &str) -> Result<(), AppError> {
-    conn.execute("UPDATE stories SET text = ?2 WHERE id = ?1", params![story_id, text])?;
+    conn.execute(
+        "UPDATE stories SET text = ?2 WHERE id = ?1",
+        params![story_id, text],
+    )?;
     Ok(())
 }
 
-pub fn add_revision(conn: &Connection, story_id: i64, kind: &str, payload: &str) -> Result<(), AppError> {
+pub fn add_revision(
+    conn: &Connection,
+    story_id: i64,
+    kind: &str,
+    payload: &str,
+) -> Result<(), AppError> {
     conn.execute(
         "INSERT INTO revisions (story_id, kind, payload) VALUES (?1, ?2, ?3)",
         params![story_id, kind, payload],
@@ -379,13 +410,22 @@ pub fn get_revision(conn: &Connection, id: i64) -> Result<Revision, AppError> {
 }
 
 pub fn add_note(conn: &Connection, story_id: i64, text: &str) -> Result<(), AppError> {
-    conn.execute("INSERT INTO pending_notes (story_id, text) VALUES (?1, ?2)", params![story_id, text])?;
+    conn.execute(
+        "INSERT INTO pending_notes (story_id, text) VALUES (?1, ?2)",
+        params![story_id, text],
+    )?;
     Ok(())
 }
 
 pub fn list_notes(conn: &Connection, story_id: i64) -> Result<Vec<Note>, AppError> {
-    let mut stmt = conn.prepare("SELECT id, text FROM pending_notes WHERE story_id = ?1 ORDER BY id")?;
-    let rows = stmt.query_map([story_id], |row| Ok(Note { id: row.get(0)?, text: row.get(1)? }))?;
+    let mut stmt =
+        conn.prepare("SELECT id, text FROM pending_notes WHERE story_id = ?1 ORDER BY id")?;
+    let rows = stmt.query_map([story_id], |row| {
+        Ok(Note {
+            id: row.get(0)?,
+            text: row.get(1)?,
+        })
+    })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
@@ -397,7 +437,11 @@ pub fn delete_notes(conn: &Connection, ids: &[i64]) -> Result<(), AppError> {
 }
 
 /// Per-story settings; stories without saved settings get the defaults.
-pub fn get_story_settings(conn: &Connection, story_id: i64, default_profile: &str) -> Result<StorySettings, AppError> {
+pub fn get_story_settings(
+    conn: &Connection,
+    story_id: i64,
+    default_profile: &str,
+) -> Result<StorySettings, AppError> {
     let mut stmt = conn.prepare(
         "SELECT target_minutes, age_group, profile FROM story_settings WHERE story_id = ?1",
     )?;
@@ -405,7 +449,11 @@ pub fn get_story_settings(conn: &Connection, story_id: i64, default_profile: &st
     let saved = rows
         .next()?
         .map(|row| -> rusqlite::Result<StorySettings> {
-            Ok(StorySettings { target_minutes: row.get(0)?, age_group: row.get(1)?, profile: row.get(2)? })
+            Ok(StorySettings {
+                target_minutes: row.get(0)?,
+                age_group: row.get(1)?,
+                profile: row.get(2)?,
+            })
         })
         .transpose()?;
     Ok(saved.unwrap_or_else(|| StorySettings {
@@ -416,14 +464,21 @@ pub fn get_story_settings(conn: &Connection, story_id: i64, default_profile: &st
 }
 
 /// Validates minutes and age group; the caller validates the profile id.
-pub fn set_story_settings(conn: &Connection, story_id: i64, settings: &StorySettings) -> Result<(), AppError> {
+pub fn set_story_settings(
+    conn: &Connection,
+    story_id: i64,
+    settings: &StorySettings,
+) -> Result<(), AppError> {
     if !(MIN_TARGET_MINUTES..=MAX_TARGET_MINUTES).contains(&settings.target_minutes) {
         return Err(AppError::new(format!(
             "target length must be {MIN_TARGET_MINUTES}-{MAX_TARGET_MINUTES} minutes"
         )));
     }
     if !AGE_GROUPS.contains(&settings.age_group.as_str()) {
-        return Err(AppError::new(format!("unknown audience: {}", settings.age_group)));
+        return Err(AppError::new(format!(
+            "unknown audience: {}",
+            settings.age_group
+        )));
     }
     conn.execute(
         "INSERT INTO story_settings (story_id, target_minutes, age_group, profile) VALUES (?1, ?2, ?3, ?4)
@@ -494,7 +549,11 @@ mod tests {
         create_story(&conn, "A", "text a").unwrap();
         create_story(&conn, "B", "text b").unwrap();
 
-        let titles: Vec<_> = list_stories(&conn).unwrap().into_iter().map(|s| s.title).collect();
+        let titles: Vec<_> = list_stories(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.title)
+            .collect();
 
         assert_eq!(titles, ["B", "A"]);
     }
@@ -507,7 +566,11 @@ mod tests {
 
         replace_scenes(&mut conn, story.id, &[scene("one"), scene("two")]).unwrap();
 
-        let texts: Vec<_> = list_scenes(&conn, story.id).unwrap().into_iter().map(|s| s.text).collect();
+        let texts: Vec<_> = list_scenes(&conn, story.id)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.text)
+            .collect();
         assert_eq!(texts, ["one", "two"]);
     }
 
@@ -536,7 +599,13 @@ mod tests {
         add_message(&conn, story.id, "assistant", "hello", true).unwrap();
 
         let messages = list_messages(&conn, story.id).unwrap();
-        assert_eq!(messages.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(), ["hi", "hello"]);
+        assert_eq!(
+            messages
+                .iter()
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>(),
+            ["hi", "hello"]
+        );
         assert!(messages[1].scenes_changed);
 
         delete_story(&conn, story.id).unwrap();
@@ -561,8 +630,11 @@ mod tests {
         conn.execute_batch("CREATE TABLE t (a INTEGER)").unwrap();
         ensure_column(&conn, "t", "b", "REAL").unwrap();
         ensure_column(&conn, "t", "b", "REAL").unwrap();
-        conn.execute("INSERT INTO t (a, b) VALUES (1, 2.5)", []).unwrap();
-        let b: f64 = conn.query_row("SELECT b FROM t", [], |row| row.get(0)).unwrap();
+        conn.execute("INSERT INTO t (a, b) VALUES (1, 2.5)", [])
+            .unwrap();
+        let b: f64 = conn
+            .query_row("SELECT b FROM t", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(b, 2.5);
     }
 
@@ -582,15 +654,31 @@ mod tests {
         let conn = memory_db();
         let story = create_story(&conn, "A", "t").unwrap();
         let defaults = get_story_settings(&conn, story.id, "fairy_tale").unwrap();
-        assert_eq!((defaults.target_minutes, defaults.age_group.as_str()), (10, "up_to_10"));
+        assert_eq!(
+            (defaults.target_minutes, defaults.age_group.as_str()),
+            (10, "up_to_10")
+        );
 
-        let custom = StorySettings { target_minutes: 5, age_group: "up_to_5".into(), profile: "novel".into() };
+        let custom = StorySettings {
+            target_minutes: 5,
+            age_group: "up_to_5".into(),
+            profile: "novel".into(),
+        };
         set_story_settings(&conn, story.id, &custom).unwrap();
-        assert_eq!(get_story_settings(&conn, story.id, "fairy_tale").unwrap(), custom);
+        assert_eq!(
+            get_story_settings(&conn, story.id, "fairy_tale").unwrap(),
+            custom
+        );
 
-        let too_long = StorySettings { target_minutes: 9999, ..custom.clone() };
+        let too_long = StorySettings {
+            target_minutes: 9999,
+            ..custom.clone()
+        };
         assert!(set_story_settings(&conn, story.id, &too_long).is_err());
-        let bad_age = StorySettings { age_group: "toddler".into(), ..custom };
+        let bad_age = StorySettings {
+            age_group: "toddler".into(),
+            ..custom
+        };
         assert!(set_story_settings(&conn, story.id, &bad_age).is_err());
     }
 

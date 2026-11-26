@@ -31,10 +31,15 @@ pub struct SceneCharacterOff {
 }
 
 pub fn list(conn: &Connection, story_id: i64) -> Result<Vec<Character>, AppError> {
-    let mut stmt =
-        conn.prepare("SELECT id, name, file_path FROM story_characters WHERE story_id = ?1 ORDER BY id")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, name, file_path FROM story_characters WHERE story_id = ?1 ORDER BY id",
+    )?;
     let rows = stmt.query_map([story_id], |row| {
-        Ok(Character { id: row.get(0)?, name: row.get(1)?, file_path: row.get(2)? })
+        Ok(Character {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            file_path: row.get(2)?,
+        })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
@@ -44,22 +49,36 @@ pub fn list_off(conn: &Connection, story_id: i64) -> Result<Vec<SceneCharacterOf
         "SELECT position, character_id FROM scene_character_off WHERE story_id = ?1 ORDER BY position, character_id",
     )?;
     let rows = stmt.query_map([story_id], |row| {
-        Ok(SceneCharacterOff { position: row.get(0)?, character_id: row.get(1)? })
+        Ok(SceneCharacterOff {
+            position: row.get(0)?,
+            character_id: row.get(1)?,
+        })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
-fn save_file(workspace: &Path, story_id: i64, file_name: &str, bytes: &[u8]) -> Result<PathBuf, AppError> {
+fn save_file(
+    workspace: &Path,
+    story_id: i64,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<PathBuf, AppError> {
     let extension = media::reference_extension(file_name)?;
     if bytes.is_empty() || bytes.len() > media::MAX_REFERENCE_BYTES {
-        return Err(AppError::new("character image must be between 1 byte and 10 MB"));
+        return Err(AppError::new(
+            "character image must be between 1 byte and 10 MB",
+        ));
     }
     let dir = media::story_media_dir(workspace, story_id).join(CHARACTER_DIR);
-    std::fs::create_dir_all(&dir).map_err(|e| AppError::new(format!("cannot create {}: {e}", dir.display())))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| AppError::new(format!("cannot create {}: {e}", dir.display())))?;
     // A new name every time: the webview caches images by URL.
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
     let path = dir.join(format!("character-{stamp}.{extension}"));
-    std::fs::write(&path, bytes).map_err(|e| AppError::new(format!("cannot write {}: {e}", path.display())))?;
+    std::fs::write(&path, bytes)
+        .map_err(|e| AppError::new(format!("cannot write {}: {e}", path.display())))?;
     Ok(path)
 }
 
@@ -71,22 +90,35 @@ const MAX_PROMPT_CHARS: usize = 1000;
 fn check_new(conn: &Connection, story_id: i64, name: &str) -> Result<String, AppError> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > MAX_NAME_CHARS {
-        return Err(AppError::new(format!("a character name must be 1 to {MAX_NAME_CHARS} characters")));
+        return Err(AppError::new(format!(
+            "a character name must be 1 to {MAX_NAME_CHARS} characters"
+        )));
     }
     db::get_story(conn, story_id)?;
     if list(conn, story_id)?.len() >= MAX_CHARACTERS {
-        return Err(AppError::new(format!("a story can have at most {MAX_CHARACTERS} characters")));
+        return Err(AppError::new(format!(
+            "a story can have at most {MAX_CHARACTERS} characters"
+        )));
     }
     Ok(name.to_owned())
 }
 
-fn insert_row(conn: &Connection, story_id: i64, name: &str, path: &Path) -> Result<Character, AppError> {
+fn insert_row(
+    conn: &Connection,
+    story_id: i64,
+    name: &str,
+    path: &Path,
+) -> Result<Character, AppError> {
     let file_path = path.display().to_string();
     conn.execute(
         "INSERT INTO story_characters (story_id, name, file_path) VALUES (?1, ?2, ?3)",
         params![story_id, name, file_path],
     )?;
-    Ok(Character { id: conn.last_insert_rowid(), name: name.to_owned(), file_path })
+    Ok(Character {
+        id: conn.last_insert_rowid(),
+        name: name.to_owned(),
+        file_path,
+    })
 }
 
 /// Adds a character with its picture to the story.
@@ -115,7 +147,9 @@ pub fn prepare_generation(
     let name = check_new(conn, story_id, name)?;
     let prompt = prompt.trim();
     if prompt.is_empty() || prompt.chars().count() > MAX_PROMPT_CHARS {
-        return Err(AppError::new(format!("describe the character in 1 to {MAX_PROMPT_CHARS} characters")));
+        return Err(AppError::new(format!(
+            "describe the character in 1 to {MAX_PROMPT_CHARS} characters"
+        )));
     }
     Ok((name, prompt.to_owned()))
 }
@@ -127,9 +161,19 @@ pub fn character_dir(workspace: &Path, story_id: i64) -> PathBuf {
 
 /// Registers a picture that was generated into the character folder: it gets the usual unique name and becomes
 /// the character. The credits are already spent, so on failure the file is left where it is.
-pub fn adopt_generated(conn: &Connection, story_id: i64, name: &str, generated: &Path) -> Result<Character, AppError> {
-    let extension = generated.extension().and_then(|e| e.to_str()).unwrap_or("png");
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+pub fn adopt_generated(
+    conn: &Connection,
+    story_id: i64,
+    name: &str,
+    generated: &Path,
+) -> Result<Character, AppError> {
+    let extension = generated
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png");
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
     let target = generated.with_file_name(format!("character-{stamp}.{extension}"));
     std::fs::rename(generated, &target)
         .map_err(|e| AppError::new(format!("cannot move {}: {e}", generated.display())))?;
@@ -137,7 +181,11 @@ pub fn adopt_generated(conn: &Connection, story_id: i64, name: &str, generated: 
 }
 
 /// Removes a character; returns its picture so the caller can delete the file.
-pub fn remove(conn: &Connection, story_id: i64, character_id: i64) -> Result<Option<String>, AppError> {
+pub fn remove(
+    conn: &Connection,
+    story_id: i64,
+    character_id: i64,
+) -> Result<Option<String>, AppError> {
     let file: Option<String> = conn
         .query_row(
             "SELECT file_path FROM story_characters WHERE id = ?1 AND story_id = ?2",
@@ -149,7 +197,10 @@ pub fn remove(conn: &Connection, story_id: i64, character_id: i64) -> Result<Opt
         "DELETE FROM scene_character_off WHERE character_id = ?1 AND story_id = ?2",
         params![character_id, story_id],
     )?;
-    conn.execute("DELETE FROM story_characters WHERE id = ?1 AND story_id = ?2", params![character_id, story_id])?;
+    conn.execute(
+        "DELETE FROM story_characters WHERE id = ?1 AND story_id = ?2",
+        params![character_id, story_id],
+    )?;
     Ok(file)
 }
 
@@ -186,7 +237,11 @@ pub fn set_in_scene(
 }
 
 /// The pictures of the characters that appear in a scene, in the order they were added.
-pub fn files_for_scene(conn: &Connection, story_id: i64, position: i64) -> Result<Vec<PathBuf>, AppError> {
+pub fn files_for_scene(
+    conn: &Connection,
+    story_id: i64,
+    position: i64,
+) -> Result<Vec<PathBuf>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT c.file_path FROM story_characters c
          WHERE c.story_id = ?1
@@ -195,7 +250,11 @@ pub fn files_for_scene(conn: &Connection, story_id: i64, position: i64) -> Resul
          ORDER BY c.id",
     )?;
     let rows = stmt.query_map(params![story_id, position], |row| row.get::<_, String>(0))?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?.into_iter().map(PathBuf::from).collect())
+    Ok(rows
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(PathBuf::from)
+        .collect())
 }
 
 #[cfg(test)]
@@ -224,7 +283,7 @@ mod tests {
     fn an_added_character_is_listed_and_its_file_is_on_disk() {
         let (conn, story, dir) = setup();
         let hero = add(&conn, &dir, story, "  Tembo ", "tembo.PNG", b"png bytes").unwrap();
-        assert_eq!(list(&conn, story).unwrap(), [hero.clone()]);
+        assert_eq!(list(&conn, story).unwrap(), std::slice::from_ref(&hero));
         assert_eq!(hero.name, "Tembo", "the name is trimmed");
         assert_eq!(std::fs::read(&hero.file_path).unwrap(), b"png bytes");
         assert!(hero.file_path.ends_with(".png"));
@@ -233,11 +292,34 @@ mod tests {
     #[test]
     fn bad_input_is_rejected_and_leaves_no_character() {
         let (conn, story, dir) = setup();
-        assert!(add(&conn, &dir, story, "  ", "a.png", b"x").is_err(), "empty name");
-        assert!(add(&conn, &dir, story, &"n".repeat(MAX_NAME_CHARS + 1), "a.png", b"x").is_err(), "long name");
-        assert!(add(&conn, &dir, story, "Tembo", "a.exe", b"x").is_err(), "not an image");
-        assert!(add(&conn, &dir, story, "Tembo", "a.png", b"").is_err(), "empty file");
-        assert!(add(&conn, &dir, 999, "Tembo", "a.png", b"x").is_err(), "unknown story");
+        assert!(
+            add(&conn, &dir, story, "  ", "a.png", b"x").is_err(),
+            "empty name"
+        );
+        assert!(
+            add(
+                &conn,
+                &dir,
+                story,
+                &"n".repeat(MAX_NAME_CHARS + 1),
+                "a.png",
+                b"x"
+            )
+            .is_err(),
+            "long name"
+        );
+        assert!(
+            add(&conn, &dir, story, "Tembo", "a.exe", b"x").is_err(),
+            "not an image"
+        );
+        assert!(
+            add(&conn, &dir, story, "Tembo", "a.png", b"").is_err(),
+            "empty file"
+        );
+        assert!(
+            add(&conn, &dir, 999, "Tembo", "a.png", b"x").is_err(),
+            "unknown story"
+        );
         assert!(list(&conn, story).unwrap().is_empty());
     }
 
@@ -248,14 +330,28 @@ mod tests {
             prepare_generation(&conn, story, " Tembo ", " a small elephant ").unwrap(),
             ("Tembo".to_owned(), "a small elephant".to_owned())
         );
-        assert!(prepare_generation(&conn, story, "", "a small elephant").is_err(), "no name");
-        assert!(prepare_generation(&conn, story, "Tembo", "  ").is_err(), "no description");
-        assert!(prepare_generation(&conn, story, "Tembo", &"d".repeat(MAX_PROMPT_CHARS + 1)).is_err());
-        assert!(prepare_generation(&conn, 999, "Tembo", "x").is_err(), "unknown story");
+        assert!(
+            prepare_generation(&conn, story, "", "a small elephant").is_err(),
+            "no name"
+        );
+        assert!(
+            prepare_generation(&conn, story, "Tembo", "  ").is_err(),
+            "no description"
+        );
+        assert!(
+            prepare_generation(&conn, story, "Tembo", &"d".repeat(MAX_PROMPT_CHARS + 1)).is_err()
+        );
+        assert!(
+            prepare_generation(&conn, 999, "Tembo", "x").is_err(),
+            "unknown story"
+        );
         for index in 0..MAX_CHARACTERS {
             add(&conn, &dir, story, &format!("hero {index}"), "a.png", b"x").unwrap();
         }
-        assert!(prepare_generation(&conn, story, "Tembo", "x").is_err(), "no room left");
+        assert!(
+            prepare_generation(&conn, story, "Tembo", "x").is_err(),
+            "no room left"
+        );
     }
 
     #[test]
@@ -288,18 +384,37 @@ mod tests {
         let (conn, story, dir) = setup();
         let hero = add(&conn, &dir, story, "Tembo", "a.png", b"x").unwrap();
         let owl = add(&conn, &dir, story, "Owl", "b.png", b"y").unwrap();
-        let both = [PathBuf::from(&hero.file_path), PathBuf::from(&owl.file_path)];
+        let both = [
+            PathBuf::from(&hero.file_path),
+            PathBuf::from(&owl.file_path),
+        ];
         assert_eq!(files_for_scene(&conn, story, 0).unwrap(), both);
 
         set_in_scene(&conn, story, 0, hero.id, false).unwrap();
         set_in_scene(&conn, story, 0, hero.id, false).unwrap();
-        assert_eq!(files_for_scene(&conn, story, 0).unwrap(), [PathBuf::from(&owl.file_path)]);
-        assert_eq!(files_for_scene(&conn, story, 1).unwrap(), both, "other scenes are unaffected");
-        assert_eq!(list_off(&conn, story).unwrap(), [SceneCharacterOff { position: 0, character_id: hero.id }]);
+        assert_eq!(
+            files_for_scene(&conn, story, 0).unwrap(),
+            [PathBuf::from(&owl.file_path)]
+        );
+        assert_eq!(
+            files_for_scene(&conn, story, 1).unwrap(),
+            both,
+            "other scenes are unaffected"
+        );
+        assert_eq!(
+            list_off(&conn, story).unwrap(),
+            [SceneCharacterOff {
+                position: 0,
+                character_id: hero.id
+            }]
+        );
 
         set_in_scene(&conn, story, 0, hero.id, true).unwrap();
         assert_eq!(files_for_scene(&conn, story, 0).unwrap(), both);
-        assert!(set_in_scene(&conn, story, 0, 12345, false).is_err(), "unknown character");
+        assert!(
+            set_in_scene(&conn, story, 0, 12345, false).is_err(),
+            "unknown character"
+        );
     }
 
     #[test]
@@ -308,7 +423,10 @@ mod tests {
         let hero = add(&conn, &dir, story, "Tembo", "a.png", b"x").unwrap();
         set_in_scene(&conn, story, 2, hero.id, false).unwrap();
 
-        assert_eq!(remove(&conn, story, hero.id).unwrap().as_deref(), Some(hero.file_path.as_str()));
+        assert_eq!(
+            remove(&conn, story, hero.id).unwrap().as_deref(),
+            Some(hero.file_path.as_str())
+        );
 
         assert!(list(&conn, story).unwrap().is_empty());
         assert!(list_off(&conn, story).unwrap().is_empty());
@@ -320,7 +438,8 @@ mod tests {
         let (conn, story, dir) = setup();
         let hero = add(&conn, &dir, story, "Tembo", "a.png", b"x").unwrap();
         set_in_scene(&conn, story, 0, hero.id, false).unwrap();
-        conn.execute("DELETE FROM stories WHERE id = ?1", [story]).unwrap();
+        conn.execute("DELETE FROM stories WHERE id = ?1", [story])
+            .unwrap();
         assert!(list(&conn, story).unwrap().is_empty());
         assert!(list_off(&conn, story).unwrap().is_empty());
     }

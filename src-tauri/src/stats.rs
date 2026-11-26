@@ -43,7 +43,11 @@ fn round_tenth(value: f64) -> f64 {
 pub fn estimate(story: &Story, scenes: &[Scene], settings: &StorySettings) -> StoryStats {
     let from_scenes = !scenes.is_empty();
     let text = if from_scenes {
-        scenes.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ")
+        scenes
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
     } else {
         story.text.clone()
     };
@@ -63,26 +67,46 @@ mod tests {
     use super::*;
 
     fn story(text: &str) -> Story {
-        Story { id: 1, title: "t".into(), text: text.into() }
+        Story {
+            id: 1,
+            title: "t".into(),
+            text: text.into(),
+        }
     }
 
     fn settings(age: &str) -> StorySettings {
-        StorySettings { target_minutes: 10, age_group: age.into(), profile: "fairy_tale".into() }
+        StorySettings {
+            target_minutes: 10,
+            age_group: age.into(),
+            profile: "fairy_tale".into(),
+        }
     }
 
     fn scene(text: &str) -> Scene {
-        Scene { id: 1, position: 0, text: text.into(), image_prompt: "p".into() }
+        Scene {
+            id: 1,
+            position: 0,
+            text: text.into(),
+            image_prompt: "p".into(),
+        }
     }
 
     #[test]
     fn measures_story_text_when_there_are_no_scenes() {
         let stats = estimate(&story(&"слово ".repeat(120)), &[], &settings("up_to_10"));
-        assert_eq!((stats.words, stats.estimated_minutes, stats.from_scenes), (120, 1.0, false));
+        assert_eq!(
+            (stats.words, stats.estimated_minutes, stats.from_scenes),
+            (120, 1.0, false)
+        );
     }
 
     #[test]
     fn prefers_scenes_over_story_text() {
-        let stats = estimate(&story("a b c d e f"), &[scene("one two")], &settings("up_to_10"));
+        let stats = estimate(
+            &story("a b c d e f"),
+            &[scene("one two")],
+            &settings("up_to_10"),
+        );
         assert_eq!((stats.words, stats.from_scenes), (2, true));
     }
 
@@ -96,7 +120,11 @@ mod tests {
 
     #[test]
     fn audio_tags_are_not_counted_as_words() {
-        let stats = estimate(&story(""), &[scene("[softly] one [long pause] two")], &settings("adult"));
+        let stats = estimate(
+            &story(""),
+            &[scene("[softly] one [long pause] two")],
+            &settings("adult"),
+        );
         assert_eq!(stats.words, 2);
     }
 

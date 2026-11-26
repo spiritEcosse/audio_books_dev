@@ -11,7 +11,10 @@ pub const KIND_SCENES: &str = "scenes";
 fn snapshot_scenes(conn: &Connection, story_id: i64) -> Result<(), AppError> {
     let scenes: Vec<NewScene> = db::list_scenes(conn, story_id)?
         .into_iter()
-        .map(|s| NewScene { text: s.text, image_prompt: s.image_prompt })
+        .map(|s| NewScene {
+            text: s.text,
+            image_prompt: s.image_prompt,
+        })
         .collect();
     if scenes.is_empty() {
         return Ok(());
@@ -28,7 +31,11 @@ fn set_story_text(conn: &Connection, story_id: i64, text: &str) -> Result<(), Ap
 }
 
 /// Replaces all scenes, saving the previous ones as a revision first.
-pub fn apply_scenes(conn: &mut Connection, story_id: i64, scenes: &[NewScene]) -> Result<(), AppError> {
+pub fn apply_scenes(
+    conn: &mut Connection,
+    story_id: i64,
+    scenes: &[NewScene],
+) -> Result<(), AppError> {
     snapshot_scenes(conn, story_id)?;
     db::replace_scenes(conn, story_id, scenes)
 }
@@ -110,7 +117,10 @@ mod tests {
     }
 
     fn scene(text: &str) -> NewScene {
-        NewScene { text: text.into(), image_prompt: "p".into() }
+        NewScene {
+            text: text.into(),
+            image_prompt: "p".into(),
+        }
     }
 
     fn proposal_message(conn: &Connection, story_id: i64, text: &str) -> i64 {
@@ -128,7 +138,10 @@ mod tests {
 
         assert_eq!(db::get_story(&conn, id).unwrap().text, "rewritten");
         let revisions = db::list_revisions(&conn, id).unwrap();
-        assert_eq!((revisions[0].kind.as_str(), revisions[0].payload.as_str()), (KIND_STORY_TEXT, "original"));
+        assert_eq!(
+            (revisions[0].kind.as_str(), revisions[0].payload.as_str()),
+            (KIND_STORY_TEXT, "original")
+        );
         assert_eq!(db::list_notes(&conn, id).unwrap().len(), 1);
     }
 
@@ -157,7 +170,10 @@ mod tests {
     fn applying_scenes_snapshots_the_previous_ones() {
         let (mut conn, id) = setup();
         apply_scenes(&mut conn, id, &[scene("first")]).unwrap();
-        assert!(db::list_revisions(&conn, id).unwrap().is_empty(), "nothing to snapshot yet");
+        assert!(
+            db::list_revisions(&conn, id).unwrap().is_empty(),
+            "nothing to snapshot yet"
+        );
 
         apply_scenes(&mut conn, id, &[scene("second")]).unwrap();
 
@@ -175,9 +191,17 @@ mod tests {
 
         restore_revision(&mut conn, old).unwrap();
 
-        let texts: Vec<_> = db::list_scenes(&conn, id).unwrap().into_iter().map(|s| s.text).collect();
+        let texts: Vec<_> = db::list_scenes(&conn, id)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.text)
+            .collect();
         assert_eq!(texts, ["first"]);
-        assert!(db::list_revisions(&conn, id).unwrap()[0].payload.contains("second"));
+        assert!(
+            db::list_revisions(&conn, id).unwrap()[0]
+                .payload
+                .contains("second")
+        );
     }
 
     #[test]

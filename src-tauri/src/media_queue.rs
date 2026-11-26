@@ -51,7 +51,11 @@ pub struct ItemResult {
     pub saved: Result<Saved, String>,
 }
 
-pub fn queued_rows(conn: &Connection, story_id: i64, kind: &str) -> Result<Vec<QueuedRow>, AppError> {
+pub fn queued_rows(
+    conn: &Connection,
+    story_id: i64,
+    kind: &str,
+) -> Result<Vec<QueuedRow>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT position, source, model_id, voice_id, estimate_credits FROM scene_assets
          WHERE story_id = ?1 AND kind = ?2 AND status = ?3 AND started_at IS NULL ORDER BY position",
@@ -96,13 +100,19 @@ pub fn parse_estimates(text: &str) -> Result<Vec<(i64, f64)>, AppError> {
     let estimates: Vec<(i64, f64)> = list
         .iter()
         .filter_map(|e| {
-            let credits = e["credits"].as_f64().filter(|c| c.is_finite() && *c >= 0.0)?;
+            let credits = e["credits"]
+                .as_f64()
+                .filter(|c| c.is_finite() && *c >= 0.0)?;
             Some((e["position"].as_i64()?, credits))
         })
         .collect();
     if estimates.is_empty() {
         let reasons = error_messages(&json);
-        let suffix = if reasons.is_empty() { String::new() } else { format!(": {reasons}") };
+        let suffix = if reasons.is_empty() {
+            String::new()
+        } else {
+            format!(": {reasons}")
+        };
         return Err(AppError::new(format!("no price returned{suffix}")));
     }
     Ok(estimates)
@@ -113,9 +123,13 @@ pub fn is_trusted_url(url: &str) -> bool {
     if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return false;
     }
-    let Some(rest) = url.strip_prefix("https://") else { return false };
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
     let host = rest.split(['/', '?', '#']).next().unwrap_or("");
-    !host.contains('@') && !host.contains(':') && (host == TRUSTED_HOST || host.ends_with(&format!(".{TRUSTED_HOST}")))
+    !host.contains('@')
+        && !host.contains(':')
+        && (host == TRUSTED_HOST || host.ends_with(&format!(".{TRUSTED_HOST}")))
 }
 
 fn file_extension(url: &str, kind: &str) -> String {
@@ -139,7 +153,11 @@ pub fn next_versioned_path(dir: &Path, position: i64, kind: &str, extension: &st
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let digits: String = name.strip_prefix(&prefix)?.chars().take_while(char::is_ascii_digit).collect();
+            let digits: String = name
+                .strip_prefix(&prefix)?
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
             digits.parse::<u32>().ok()
         })
         .max()
@@ -156,7 +174,8 @@ fn download(url: &str, dest: &Path) -> Result<(), String> {
         return Err("refused to download from an untrusted URL".into());
     }
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
     let mut partial = dest.as_os_str().to_owned();
     partial.push(".part");
@@ -181,14 +200,27 @@ pub fn upload(url: &str, file: &Path, mime: &str) -> Result<(), String> {
         return Err("refused to upload to an untrusted URL".into());
     }
     let status = Command::new("curl")
-        .args(["-fsS", "--max-time", TRANSFER_TIMEOUT_SECS, "-o", "/dev/null", "-X", "PUT", "-H"])
+        .args([
+            "-fsS",
+            "--max-time",
+            TRANSFER_TIMEOUT_SECS,
+            "-o",
+            "/dev/null",
+            "-X",
+            "PUT",
+            "-H",
+        ])
         .arg(format!("Content-Type: {mime}"))
         .arg("--data-binary")
         .arg(format!("@{}", file.display()))
         .args(["--", url])
         .status()
         .map_err(|e| format!("cannot run curl: {e}"))?;
-    if status.success() { Ok(()) } else { Err(curl_failed("upload", status)) }
+    if status.success() {
+        Ok(())
+    } else {
+        Err(curl_failed("upload", status))
+    }
 }
 
 /// Downloads what Claude reported for one scene into `dir`. The file is kept even when the text
@@ -205,20 +237,38 @@ pub fn save_outcome(
     if let Some(error) = &outcome.error {
         return Err(error.clone());
     }
-    let url = outcome.url.as_deref().ok_or("the result has no download URL")?;
+    let url = outcome
+        .url
+        .as_deref()
+        .ok_or("the result has no download URL")?;
     let path = next_versioned_path(dir, position, kind, &file_extension(url, kind));
     download(url, &path)?;
-    if outcome.prompt.as_deref().is_some_and(|used| used.trim() != expected_text.trim()) {
-        return Err(format!("the text was altered on the way; the file was kept at {}", path.display()));
+    if outcome
+        .prompt
+        .as_deref()
+        .is_some_and(|used| used.trim() != expected_text.trim())
+    {
+        return Err(format!(
+            "the text was altered on the way; the file was kept at {}",
+            path.display()
+        ));
     }
-    Ok(Saved { path: path.display().to_string(), credits: outcome.credits.or(estimate_credits).unwrap_or(0.0) })
+    Ok(Saved {
+        path: path.display().to_string(),
+        credits: outcome.credits.or(estimate_credits).unwrap_or(0.0),
+    })
 }
 
 const NOT_STARTED: &str =
     "story_id = ?1 AND position = ?2 AND kind = ?3 AND status = 'requested' AND started_at IS NULL";
 const REQUESTED: &str = "story_id = ?1 AND position = ?2 AND kind = ?3 AND status = 'requested'";
 
-pub fn save_estimates(conn: &Connection, story_id: i64, kind: &str, estimates: &[(i64, f64)]) -> Result<(), AppError> {
+pub fn save_estimates(
+    conn: &Connection,
+    story_id: i64,
+    kind: &str,
+    estimates: &[(i64, f64)],
+) -> Result<(), AppError> {
     for (position, credits) in estimates {
         conn.execute(
             &format!("UPDATE scene_assets SET estimate_credits = ?4 WHERE {NOT_STARTED}"),
@@ -229,7 +279,12 @@ pub fn save_estimates(conn: &Connection, story_id: i64, kind: &str, estimates: &
 }
 
 /// Shows «генерируется…» for these items in the app.
-pub fn mark_started(conn: &Connection, story_id: i64, kind: &str, positions: &[i64]) -> Result<(), AppError> {
+pub fn mark_started(
+    conn: &Connection,
+    story_id: i64,
+    kind: &str,
+    positions: &[i64],
+) -> Result<(), AppError> {
     for position in positions {
         conn.execute(
             &format!("UPDATE scene_assets SET started_at = CURRENT_TIMESTAMP WHERE {NOT_STARTED}"),
@@ -239,7 +294,12 @@ pub fn mark_started(conn: &Connection, story_id: i64, kind: &str, positions: &[i
     Ok(())
 }
 
-pub fn apply_results(conn: &Connection, story_id: i64, kind: &str, results: &[ItemResult]) -> Result<(), AppError> {
+pub fn apply_results(
+    conn: &Connection,
+    story_id: i64,
+    kind: &str,
+    results: &[ItemResult],
+) -> Result<(), AppError> {
     for result in results {
         match &result.saved {
             Ok(saved) => conn.execute(
@@ -269,8 +329,13 @@ pub fn fail_started(
     positions: &[i64],
     message: &str,
 ) -> Result<(), AppError> {
-    let results: Vec<ItemResult> =
-        positions.iter().map(|&position| ItemResult { position, saved: Err(message.to_owned()) }).collect();
+    let results: Vec<ItemResult> = positions
+        .iter()
+        .map(|&position| ItemResult {
+            position,
+            saved: Err(message.to_owned()),
+        })
+        .collect();
     apply_results(conn, story_id, kind, &results)
 }
 
@@ -285,15 +350,22 @@ mod tests {
         db::init(&conn).unwrap();
         let story = db::create_story(&conn, "t", "body").unwrap();
         let scenes = [
-            NewScene { text: "[softly] one".into(), image_prompt: "fox".into() },
-            NewScene { text: "two".into(), image_prompt: "owl".into() },
+            NewScene {
+                text: "[softly] one".into(),
+                image_prompt: "fox".into(),
+            },
+            NewScene {
+                text: "two".into(),
+                image_prompt: "owl".into(),
+            },
         ];
         db::replace_scenes(&mut conn, story.id, &scenes).unwrap();
         (conn, story.id)
     }
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("audiobooks-test-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("audiobooks-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -301,14 +373,20 @@ mod tests {
 
     #[test]
     fn parses_estimates_even_when_wrapped_in_prose_or_fences() {
-        let text = "Done:\n```json\n{\"estimates\":[{\"position\":1,\"credits\":400}],\"errors\":[]}\n```";
+        let text =
+            "Done:\n```json\n{\"estimates\":[{\"position\":1,\"credits\":400}],\"errors\":[]}\n```";
         assert_eq!(parse_estimates(text).unwrap(), vec![(1, 400.0)]);
     }
 
     #[test]
     fn estimate_without_prices_reports_the_reasons() {
         let text = r#"{"estimates":[],"errors":[{"position":0,"message":"not signed in"}]}"#;
-        assert!(parse_estimates(text).unwrap_err().to_string().contains("not signed in"));
+        assert!(
+            parse_estimates(text)
+                .unwrap_err()
+                .to_string()
+                .contains("not signed in")
+        );
     }
 
     #[test]
@@ -317,15 +395,24 @@ mod tests {
         assert!(parse_estimates("} nonsense {").is_err());
     }
 
-
     #[test]
     fn only_elevenlabs_content_https_urls_are_trusted() {
-        assert!(is_trusted_url("https://elevenlabsusercontent.com/a/b.mp3?x=1"));
-        assert!(is_trusted_url("https://cdn.elevenlabsusercontent.com/a.mp3"));
+        assert!(is_trusted_url(
+            "https://elevenlabsusercontent.com/a/b.mp3?x=1"
+        ));
+        assert!(is_trusted_url(
+            "https://cdn.elevenlabsusercontent.com/a.mp3"
+        ));
         assert!(!is_trusted_url("http://elevenlabsusercontent.com/a.mp3"));
-        assert!(!is_trusted_url("https://evilelevenlabsusercontent.com/a.mp3"));
-        assert!(!is_trusted_url("https://elevenlabsusercontent.com@evil.com/a.mp3"));
-        assert!(!is_trusted_url("https://evil.com/elevenlabsusercontent.com"));
+        assert!(!is_trusted_url(
+            "https://evilelevenlabsusercontent.com/a.mp3"
+        ));
+        assert!(!is_trusted_url(
+            "https://elevenlabsusercontent.com@evil.com/a.mp3"
+        ));
+        assert!(!is_trusted_url(
+            "https://evil.com/elevenlabsusercontent.com"
+        ));
         assert!(!is_trusted_url("https://elevenlabsusercontent.com/a b"));
     }
 
@@ -341,8 +428,14 @@ mod tests {
 
     #[test]
     fn image_extension_comes_from_the_url_with_a_safe_default() {
-        assert_eq!(file_extension("https://h/a/content.PNG?sig=1", KIND_IMAGE), "png");
-        assert_eq!(file_extension("https://h/a/content.exe", KIND_IMAGE), "webp");
+        assert_eq!(
+            file_extension("https://h/a/content.PNG?sig=1", KIND_IMAGE),
+            "png"
+        );
+        assert_eq!(
+            file_extension("https://h/a/content.exe", KIND_IMAGE),
+            "webp"
+        );
         assert_eq!(file_extension("https://h/a/content", KIND_IMAGE), "webp");
         assert_eq!(file_extension("https://h/a/content.png", KIND_AUDIO), "mp3");
     }
@@ -358,7 +451,10 @@ mod tests {
         let rows = queued_rows(&conn, story, KIND_AUDIO).unwrap();
 
         assert_eq!(rows.len(), 1);
-        assert_eq!((rows[0].position, rows[0].source.as_str()), (0, "[softly] one"));
+        assert_eq!(
+            (rows[0].position, rows[0].source.as_str()),
+            (0, "[softly] one")
+        );
     }
 
     #[test]
@@ -369,16 +465,31 @@ mod tests {
         save_estimates(&conn, story, KIND_IMAGE, &[(0, 12.0), (1, 7.0)]).unwrap();
         mark_started(&conn, story, KIND_IMAGE, &[0, 1]).unwrap();
         let results = [
-            ItemResult { position: 0, saved: Ok(Saved { path: "/m/scene-0-image-v1.webp".into(), credits: 12.0 }) },
-            ItemResult { position: 1, saved: Err("boom".into()) },
+            ItemResult {
+                position: 0,
+                saved: Ok(Saved {
+                    path: "/m/scene-0-image-v1.webp".into(),
+                    credits: 12.0,
+                }),
+            },
+            ItemResult {
+                position: 1,
+                saved: Err("boom".into()),
+            },
         ];
 
         apply_results(&conn, story, KIND_IMAGE, &results).unwrap();
 
         let assets = media::list_assets(&conn, story).unwrap();
         assert_eq!(assets[0].status, "ready");
-        assert_eq!(assets[0].file_path.as_deref(), Some("/m/scene-0-image-v1.webp"));
-        assert_eq!((assets[1].status.as_str(), assets[1].error.as_deref()), ("failed", Some("boom")));
+        assert_eq!(
+            assets[0].file_path.as_deref(),
+            Some("/m/scene-0-image-v1.webp")
+        );
+        assert_eq!(
+            (assets[1].status.as_str(), assets[1].error.as_deref()),
+            ("failed", Some("boom"))
+        );
         assert!(!assets[1].in_progress);
     }
 
@@ -399,15 +510,37 @@ mod tests {
     fn save_reports_a_missing_failed_or_untrusted_outcome_without_downloading() {
         let dir = temp_dir("save");
         assert!(save_outcome(KIND_AUDIO, 0, "t", None, None, &dir).is_err());
-        let failed = Outcome { position: 0, url: None, credits: None, prompt: None, error: Some("nope".into()) };
-        assert_eq!(save_outcome(KIND_AUDIO, 0, "t", None, Some(&failed), &dir).unwrap_err(), "nope");
-        let evil = Outcome { url: Some("https://evil.com/a.mp3".into()), error: None, ..failed };
-        assert!(save_outcome(KIND_AUDIO, 0, "t", None, Some(&evil), &dir).unwrap_err().contains("untrusted"));
+        let failed = Outcome {
+            position: 0,
+            url: None,
+            credits: None,
+            prompt: None,
+            error: Some("nope".into()),
+        };
+        assert_eq!(
+            save_outcome(KIND_AUDIO, 0, "t", None, Some(&failed), &dir).unwrap_err(),
+            "nope"
+        );
+        let evil = Outcome {
+            url: Some("https://evil.com/a.mp3".into()),
+            error: None,
+            ..failed
+        };
+        assert!(
+            save_outcome(KIND_AUDIO, 0, "t", None, Some(&evil), &dir)
+                .unwrap_err()
+                .contains("untrusted")
+        );
     }
 
     #[test]
     fn uploads_to_untrusted_hosts_are_refused() {
-        let err = upload("https://evil.com/put", Path::new("/etc/hosts"), "image/webp").unwrap_err();
+        let err = upload(
+            "https://evil.com/put",
+            Path::new("/etc/hosts"),
+            "image/webp",
+        )
+        .unwrap_err();
         assert!(err.contains("untrusted"));
     }
 }
