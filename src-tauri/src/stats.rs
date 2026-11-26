@@ -21,6 +21,21 @@ pub fn words_per_minute(age_group: &str) -> f64 {
     }
 }
 
+/// Removes narration audio tags like `[softly]` or `[long pause]`: they steer the voice and are never spoken.
+pub fn strip_audio_tags(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_tag = false;
+    for c in text.chars() {
+        match c {
+            '[' => in_tag = true,
+            ']' if in_tag => in_tag = false,
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
 fn round_tenth(value: f64) -> f64 {
     (value * 10.0).round() / 10.0
 }
@@ -32,6 +47,7 @@ pub fn estimate(story: &Story, scenes: &[Scene], settings: &StorySettings) -> St
     } else {
         story.text.clone()
     };
+    let text = strip_audio_tags(&text);
     let words = text.split_whitespace().count();
     let minutes = words as f64 / words_per_minute(&settings.age_group);
     StoryStats {
@@ -76,6 +92,18 @@ mod tests {
         let young = estimate(&story(&text), &[], &settings("up_to_5")).estimated_minutes;
         let adult = estimate(&story(&text), &[], &settings("adult")).estimated_minutes;
         assert!(young > adult);
+    }
+
+    #[test]
+    fn audio_tags_are_not_counted_as_words() {
+        let stats = estimate(&story(""), &[scene("[softly] one [long pause] two")], &settings("adult"));
+        assert_eq!(stats.words, 2);
+    }
+
+    #[test]
+    fn unclosed_bracket_keeps_text_before_it() {
+        assert_eq!(strip_audio_tags("a [b"), "a ");
+        assert_eq!(strip_audio_tags("a ] b"), "a ] b");
     }
 
     #[test]

@@ -67,6 +67,98 @@ export interface StoryDetail {
   stats: StoryStats;
 }
 
+export type AssetKind = "image" | "audio";
+
+export const RESOLUTIONS = ["1080p", "4k"] as const;
+export type Resolution = (typeof RESOLUTIONS)[number];
+
+/** An enlarged copy of a scene image that exists on disk. */
+export interface UpscaledFile {
+  label: Resolution;
+  file_path: string;
+}
+
+/** Sent as the `export-progress` event while a video export runs. */
+export interface ExportProgress {
+  story_id: number;
+  percent: number;
+  stage: "clip" | "join";
+  scene: number;
+  scenes: number;
+}
+
+/** A finished exported video in the story's media folder. */
+export interface VideoFile {
+  label: Resolution;
+  file_path: string;
+}
+
+export interface SceneAsset {
+  position: number;
+  kind: AssetKind;
+  status: "requested" | "ready" | "failed";
+  file_path: string | null;
+  stale: boolean;
+  model_id: string;
+  voice_id: string | null;
+  credits: number | null;
+  estimate_credits: number | null;
+  in_progress: boolean;
+  /** Launched and paid for, result not received yet: collect it, do not generate again. */
+  awaiting_result: boolean;
+  error: string | null;
+  upscaled: UpscaledFile[];
+}
+
+export interface SceneReference {
+  position: number;
+  file_path: string;
+}
+
+/** A recurring character: its picture goes to the image model with every scene it is not switched off for. */
+export interface Character {
+  id: number;
+  name: string;
+  file_path: string;
+}
+
+export interface SceneCharacterOff {
+  position: number;
+  character_id: number;
+}
+
+/** Mirrors `characters::MAX_CHARACTERS` in the backend. */
+export const MAX_CHARACTERS = 4;
+
+export interface ImageModel {
+  id: string;
+  label: string;
+  credits: number;
+}
+
+export interface Voice {
+  id: string;
+  label: string;
+  description: string;
+  preview_url: string;
+}
+
+export interface MediaInfo {
+  story_id: number;
+  image_model: string;
+  image_models: ImageModel[];
+  voice_id: string;
+  voices: Voice[];
+  speech_credits_per_char: number;
+  prices_measured_on: string;
+  media_dir: string;
+  assets: SceneAsset[];
+  references: SceneReference[];
+  characters: Character[];
+  character_off: SceneCharacterOff[];
+  videos: VideoFile[];
+}
+
 export interface ModelOption {
   id: string;
   label: string;
@@ -100,6 +192,54 @@ export const api = {
   listRevisions: (storyId: number) => invoke<Revision[]>("list_revisions", { storyId }),
   restoreRevision: (revisionId: number) =>
     invoke<StoryDetail>("restore_revision", { revisionId }),
+  getMedia: (storyId: number) => invoke<MediaInfo>("get_media", { storyId }),
+  setImageModel: (storyId: number, modelId: string) =>
+    invoke<MediaInfo>("set_image_model", { storyId, modelId }),
+  setVoice: (storyId: number, voiceId: string) =>
+    invoke<MediaInfo>("set_voice", { storyId, voiceId }),
+  requestAsset: (storyId: number, position: number, kind: AssetKind) =>
+    invoke<MediaInfo>("request_asset", { storyId, position, kind }),
+  requestMissingAssets: (storyId: number) =>
+    invoke<MediaInfo>("request_missing_assets", { storyId }),
+  cancelRequest: (storyId: number, position: number, kind: AssetKind) =>
+    invoke<MediaInfo>("cancel_request", { storyId, position, kind }),
+  cancelQueue: (storyId: number) => invoke<MediaInfo>("cancel_queue", { storyId }),
+  /** Prices queued narration; one scene when `position` is given, else every unpriced one. Free. */
+  estimateAudioQueue: (storyId: number, from?: number, to?: number) =>
+    invoke<MediaInfo>("estimate_audio_queue", { storyId, from: from ?? null, to: to ?? null }),
+  /** Generates priced narration (one scene or all). Spends credits. */
+  generateAudioQueue: (storyId: number, from?: number, to?: number) =>
+    invoke<MediaInfo>("generate_audio_queue", { storyId, from: from ?? null, to: to ?? null }),
+  /** Same for images; generation wires scene 0 and the scene's own reference in. Spends credits. */
+  estimateImageQueue: (storyId: number, from?: number, to?: number) =>
+    invoke<MediaInfo>("estimate_image_queue", { storyId, from: from ?? null, to: to ?? null }),
+  generateImageQueue: (storyId: number, from?: number, to?: number) =>
+    invoke<MediaInfo>("generate_image_queue", { storyId, from: from ?? null, to: to ?? null }),
+  /** Fetches the results of generations that were paid for but not delivered yet. Free. */
+  collectMedia: (storyId: number, kind: AssetKind) => invoke<MediaInfo>("collect_media", { storyId, kind }),
+  /** Gives up on a paid generation that never arrived, so it can be generated (and paid) again. */
+  abandonGeneration: (storyId: number, position: number, kind: AssetKind) =>
+    invoke<MediaInfo>("abandon_generation", { storyId, position, kind }),
+  /** Upscayl + ffmpeg: writes 1080p / 4K copies next to the finished image(s); one scene, or all when no position. */
+  upscaleImages: (storyId: number, resolution: Resolution, position?: number) =>
+    invoke<MediaInfo>("upscale_images", { storyId, resolution, position: position ?? null }),
+  /** Joins all scenes (zoom/pan clip + narration, fades) into one video. Long: minutes to tens of minutes. */
+  exportVideo: (storyId: number, resolution: Resolution) =>
+    invoke<MediaInfo>("export_video", { storyId, resolution }),
+  cancelExport: () => invoke<void>("cancel_export"),
+  setSceneReference: (storyId: number, position: number, fileName: string, bytes: number[]) =>
+    invoke<MediaInfo>("set_scene_reference", { storyId, position, fileName, bytes }),
+  clearSceneReference: (storyId: number, position: number) =>
+    invoke<MediaInfo>("clear_scene_reference", { storyId, position }),
+  addCharacter: (storyId: number, name: string, fileName: string, bytes: number[]) =>
+    invoke<MediaInfo>("add_character", { storyId, name, fileName, bytes }),
+  /** Generates the character picture with the story's image model. Spends credits. */
+  generateCharacter: (storyId: number, name: string, prompt: string) =>
+    invoke<MediaInfo>("generate_character", { storyId, name, prompt }),
+  removeCharacter: (storyId: number, characterId: number) =>
+    invoke<MediaInfo>("remove_character", { storyId, characterId }),
+  setSceneCharacter: (storyId: number, position: number, characterId: number, included: boolean) =>
+    invoke<MediaInfo>("set_scene_character", { storyId, position, characterId, included }),
   sendMessage: (id: number, text: string) =>
     invoke<StoryDetail>("send_message", { id, text }),
 };

@@ -60,6 +60,47 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     session_id TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_scenes_story ON scenes(story_id, position);
+CREATE TABLE IF NOT EXISTS story_media (
+    story_id    INTEGER PRIMARY KEY REFERENCES stories(id) ON DELETE CASCADE,
+    image_model TEXT,
+    voice_id    TEXT
+);
+-- Keyed by scene position, not scene id: replace_scenes recreates every scene row.
+-- 'source' is the scene text / image prompt the asset was requested for (staleness check).
+CREATE TABLE IF NOT EXISTS scene_assets (
+    story_id   INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    position   INTEGER NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('image', 'audio')),
+    status     TEXT NOT NULL CHECK (status IN ('requested', 'ready', 'failed')),
+    file_path  TEXT,
+    source     TEXT NOT NULL,
+    model_id   TEXT NOT NULL,
+    voice_id   TEXT,
+    credits    REAL,
+    estimate_credits REAL,
+    started_at TEXT,
+    error      TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (story_id, position, kind)
+);
+CREATE TABLE IF NOT EXISTS scene_references (
+    story_id  INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    position  INTEGER NOT NULL,
+    file_path TEXT NOT NULL,
+    PRIMARY KEY (story_id, position)
+);
+CREATE TABLE IF NOT EXISTS story_characters (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    story_id  INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    name      TEXT NOT NULL,
+    file_path TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS scene_character_off (
+    story_id     INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    position     INTEGER NOT NULL,
+    character_id INTEGER NOT NULL REFERENCES story_characters(id) ON DELETE CASCADE,
+    PRIMARY KEY (story_id, position, character_id)
+);
 ";
 
 #[derive(Debug, Clone, Serialize)]
@@ -130,10 +171,26 @@ pub struct NewScene {
 
 const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Adds a column to a table created by an older build (there is no migration framework).
+/// Callers pass compile-time constants only.
+fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<(), AppError> {
+    let exists = conn
+        .prepare(&format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"))?
+        .exists([column])?;
+    if !exists {
+        conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"), [])?;
+    }
+    Ok(())
+}
+
 pub fn init(conn: &Connection) -> Result<(), AppError> {
     // The embedded Claude console may write to this file concurrently.
     conn.busy_timeout(BUSY_TIMEOUT)?;
     conn.execute_batch(SCHEMA)?;
+    ensure_column(conn, "scene_assets", "estimate_credits", "REAL")?;
+    ensure_column(conn, "scene_assets", "started_at", "TEXT")?;
+    ensure_column(conn, "scene_assets", "session_id", "TEXT")?;
+    ensure_column(conn, "scene_assets", "flow_id", "TEXT")?;
     Ok(())
 }
 
@@ -496,6 +553,17 @@ mod tests {
         set_session(&conn, story.id, "s2").unwrap();
 
         assert_eq!(get_session(&conn, story.id).unwrap().as_deref(), Some("s2"));
+    }
+
+    #[test]
+    fn ensure_column_adds_a_missing_column_once() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (a INTEGER)").unwrap();
+        ensure_column(&conn, "t", "b", "REAL").unwrap();
+        ensure_column(&conn, "t", "b", "REAL").unwrap();
+        conn.execute("INSERT INTO t (a, b) VALUES (1, 2.5)", []).unwrap();
+        let b: f64 = conn.query_row("SELECT b FROM t", [], |row| row.get(0)).unwrap();
+        assert_eq!(b, 2.5);
     }
 
     #[test]
