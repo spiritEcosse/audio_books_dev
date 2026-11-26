@@ -3,6 +3,7 @@
 # Both are open source (AGPL-3.0 / Real-ESRGAN); the files are not committed, run this once after cloning.
 set -eu
 
+# When changing a version, update src-tauri/resources/upscayl/NOTICE (and LICENSE) to match.
 CLI_TAG="20251207-174704"
 MODEL_TAG="v2.15.0"
 CLI_URL="https://github.com/upscayl/upscayl-ncnn/releases/download/$CLI_TAG/upscayl-bin-$CLI_TAG-macos.zip"
