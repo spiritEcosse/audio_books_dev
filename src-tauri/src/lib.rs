@@ -7,6 +7,7 @@ mod collect;
 mod db;
 mod error;
 mod image_queue;
+mod loudness;
 mod media;
 mod media_queue;
 mod profiles;
