@@ -1,5 +1,5 @@
 //! Video export: one clip per scene (a smooth zoom or pan over the scene image), joined with 1 s fades, the
-//! narration laid over. Each clip is rendered on its own and cached by a hash of its inputs, so editing one
+//! narration laid over at one loudness (see `loudness`). Each clip is rendered on its own and cached by a hash of its inputs, so editing one
 //! scene only re-renders that scene; a final ffmpeg run joins the clips and mixes the audio.
 //!
 //! Timing: a scene's slot is LEAD + narration + TAIL seconds; its clip is TRANSITION longer so it overlaps the
@@ -17,6 +17,7 @@ use serde::Serialize;
 
 use crate::claude;
 use crate::error::AppError;
+use crate::loudness::{self, Measurement};
 use crate::upscale::{self, Resolution};
 
 /// The message of the error a cancelled export ends with; see `was_cancelled`.
@@ -186,10 +187,12 @@ fn clip_args(
     ]
 }
 
-/// Joins the clips with fades and mixes each narration in at its start time.
+/// Joins the clips with fades and mixes each narration in at its start time, evened out by its measurement
+/// (`loudness` has one entry per narration).
 pub fn assemble_args(
     clips: &[PathBuf],
     audios: &[PathBuf],
+    loudness: &[Option<Measurement>],
     plan: &Plan,
     output: &Path,
 ) -> Vec<OsString> {
@@ -212,8 +215,9 @@ pub fn assemble_args(
         .map(|index| {
             let millis = (plan.voice_starts[index] * 1000.0).round() as u64;
             graph.push(format!(
-                "[{}:a]adelay={millis}:all=1[a{index}]",
-                count + index
+                "[{}:a]{},adelay={millis}:all=1[a{index}]",
+                count + index,
+                loudness::filter(loudness[index].as_ref())
             ));
             format!("[a{index}]")
         })
@@ -335,19 +339,18 @@ fn run_tool(program: &Path, args: &[OsString], name: &str) -> Result<String, App
     if output.status.success() {
         return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
     }
-    let log = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    let tail: String = log
-        .chars()
-        .rev()
-        .take(ERROR_TAIL_CHARS)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
     Err(AppError::new(format!(
-        "{name} failed ({}): {tail}",
-        output.status
+        "{name} failed ({}): {}",
+        output.status,
+        log_tail(&String::from_utf8_lossy(&output.stderr))
     )))
+}
+
+/// The end of a tool's log, where it says what went wrong.
+pub(crate) fn log_tail(log: &str) -> String {
+    let log = log.trim();
+    let skip = log.chars().count().saturating_sub(ERROR_TAIL_CHARS);
+    log.chars().skip(skip).collect()
 }
 
 fn find_tool(name: &str) -> Result<PathBuf, AppError> {
@@ -426,16 +429,7 @@ fn run_ffmpeg(
     if status.success() {
         return Ok(());
     }
-    let log = log.join().unwrap_or_default();
-    let tail: String = log
-        .trim()
-        .chars()
-        .rev()
-        .take(ERROR_TAIL_CHARS)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
+    let tail = log_tail(&log.join().unwrap_or_default());
     Err(AppError::new(format!("ffmpeg failed ({status}): {tail}")))
 }
 
@@ -535,9 +529,19 @@ pub fn export(
     let audios: Vec<PathBuf> = scenes.iter().map(|scene| scene.audio.clone()).collect();
     let target = video_path(media_dir, resolution);
     report("join", scene_count, done);
+    // Under a second per scene, so the cancel flag is only checked between scenes.
+    let measured: Vec<Option<Measurement>> = audios
+        .iter()
+        .map(|audio| {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(AppError::new(CANCELLED_MESSAGE));
+            }
+            loudness::measure(&ffmpeg, audio)
+        })
+        .collect::<Result<_, _>>()?;
     render_atomically(
         &ffmpeg,
-        |out| assemble_args(&clips, &audios, &plan, out),
+        |out| assemble_args(&clips, &audios, &measured, &plan, out),
         &target,
         cancel,
         |frame| report("join", scene_count, done + frame as f64 * ASSEMBLY_WEIGHT),
@@ -637,6 +641,7 @@ mod tests {
         let args = text(&assemble_args(
             &clips,
             &audios,
+            &[None, None, None],
             &plan(&[10.0, 20.0, 5.0]),
             Path::new("out.mp4"),
         ));
@@ -649,8 +654,15 @@ mod tests {
             graph.contains("[x1][2:v]xfade=transition=fade:duration=1:offset=32.000[x2]"),
             "{graph}"
         );
-        assert!(graph.contains("[3:a]adelay=500:all=1[a0]"), "{graph}");
-        assert!(graph.contains("[5:a]adelay=32500:all=1[a2]"), "{graph}");
+        let even = loudness::filter(None);
+        assert!(
+            graph.contains(&format!("[3:a]{even},adelay=500:all=1[a0]")),
+            "{graph}"
+        );
+        assert!(
+            graph.contains(&format!("[5:a]{even},adelay=32500:all=1[a2]")),
+            "{graph}"
+        );
         assert!(
             graph.ends_with("[a0][a1][a2]amix=inputs=3:normalize=0:duration=longest[aout]"),
             "{graph}"
@@ -664,6 +676,7 @@ mod tests {
         let args = text(&assemble_args(
             &[PathBuf::from("c.mp4")],
             &[PathBuf::from("a.mp3")],
+            &[None],
             &plan(&[4.0]),
             Path::new("o.mp4"),
         ));
@@ -811,6 +824,19 @@ mod tests {
         )));
     }
 
+    /// The mean level in dB of a part of a file's sound.
+    fn mean_volume(ffmpeg: &Path, file: &Path, start: &str, seconds: &str) -> f64 {
+        let output = Command::new(ffmpeg)
+            .args(["-nostdin", "-ss", start, "-t", seconds, "-i"])
+            .arg(file)
+            .args(["-vn", "-af", "volumedetect", "-f", "null", "-"])
+            .output()
+            .unwrap();
+        let log = String::from_utf8_lossy(&output.stderr);
+        let (_, rest) = log.split_once("mean_volume: ").unwrap();
+        rest.split_whitespace().next().unwrap().parse().unwrap()
+    }
+
     /// Needs ffmpeg and ffprobe: `cargo test -- --ignored`.
     #[test]
     #[ignore]
@@ -825,7 +851,11 @@ mod tests {
             for (input, output) in [
                 ("testsrc=size=640x360:rate=1".to_string(), &image),
                 (
-                    format!("sine=frequency={}:duration={seconds}", 300 + position * 200),
+                    format!(
+                        "sine=frequency={}:duration={seconds},volume={}dB",
+                        300 + position * 200,
+                        position * -12
+                    ),
                     &audio,
                 ),
             ] {
@@ -880,6 +910,12 @@ mod tests {
         let info = run_tool(&ffprobe, &args, "ffprobe").unwrap();
         assert!(info.contains("video,1920,1080"), "{info}");
         assert!(info.contains("audio"), "{info}");
+        // Both narrations, 12 dB apart at the source, sit at the target in the stereo track.
+        for (start, seconds) in [("0.5", "2"), ("3.5", "3")] {
+            let level = mean_volume(&ffmpeg, &video, start, seconds);
+            let first = mean_volume(&ffmpeg, &video, "0.5", "2");
+            assert!((level - first).abs() < 1.5, "{level} vs {first}");
+        }
         // slots 3 s + 4 s plus the 1 s overlap of the last clip = 8 s
         let duration: f64 = info.lines().last().unwrap().trim().parse().unwrap();
         assert!((duration - 8.0).abs() < 0.5, "{duration}");
