@@ -2,6 +2,7 @@ mod actions;
 mod chat;
 mod characters;
 mod claude;
+mod collect;
 mod db;
 mod error;
 mod audio_queue;
@@ -356,6 +357,101 @@ async fn estimate_audio_queue(
     load_media(&state, &conn, story_id)
 }
 
+/// Launches the generation for the marked items, saves the ids of what started, then collects the results.
+/// Whatever is still running afterwards keeps its ids and is collected later by `collect_media`.
+async fn launch_and_collect<F>(
+    state: &State<'_, AppState>,
+    story_id: i64,
+    kind: &'static str,
+    positions: Vec<i64>,
+    start: F,
+) -> Result<(), AppError>
+where
+    F: FnOnce(&std::path::Path) -> Result<collect::StartReport, AppError> + Send + 'static,
+{
+    {
+        let conn = state.conn()?;
+        media_queue::mark_started(&conn, story_id, kind, &positions)?;
+    }
+    let workspace = state.workspace.clone();
+    let started = tauri::async_runtime::spawn_blocking(move || start(&workspace))
+        .await
+        .map_err(|e| AppError::new(format!("generation task failed: {e}")))
+        .and_then(|inner| inner);
+    {
+        let conn = state.conn()?;
+        match started {
+            Err(err) => {
+                let message = format!("generation failed, credits may already have been spent: {err}");
+                media_queue::fail_started(&conn, story_id, kind, &positions, &message)?;
+                return Ok(());
+            }
+            Ok(report) => {
+                collect::save_started(&conn, story_id, kind, &report.started)?;
+                let mut failures: Vec<media_queue::ItemResult> = report
+                    .failed
+                    .iter()
+                    .map(|(position, message)| media_queue::ItemResult { position: *position, saved: Err(message.clone()) })
+                    .collect();
+                for position in &positions {
+                    let known = report.started.iter().any(|s| s.position == *position)
+                        || report.failed.iter().any(|(p, _)| p == position);
+                    if !known {
+                        failures.push(media_queue::ItemResult {
+                            position: *position,
+                            saved: Err("Claude reported nothing for this item; credits may already have been spent, check ElevenLabs".into()),
+                        });
+                    }
+                }
+                media_queue::apply_results(&conn, story_id, kind, &failures)?;
+            }
+        }
+    }
+    collect_story(state, story_id, kind).await
+}
+
+/// Collects the generations that were launched and not delivered yet (up to about ten minutes of waiting).
+async fn collect_story(state: &State<'_, AppState>, story_id: i64, kind: &'static str) -> Result<(), AppError> {
+    let items = {
+        let conn = state.conn()?;
+        collect::pending_items(&conn, story_id, kind)?
+    };
+    if items.is_empty() {
+        return Ok(());
+    }
+    let workspace = state.workspace.clone();
+    let media_dir = media::story_media_dir(&workspace, story_id);
+    let collection = tauri::async_runtime::spawn_blocking(move || collect::collect_pending(&workspace, &media_dir, kind, items))
+        .await
+        .map_err(|e| AppError::new(format!("collecting task failed: {e}")))?;
+    let conn = state.conn()?;
+    media_queue::apply_results(&conn, story_id, kind, &collection.finished)
+}
+
+fn media_kind(kind: &str) -> Result<&'static str, AppError> {
+    match kind {
+        media::KIND_IMAGE => Ok(media::KIND_IMAGE),
+        media::KIND_AUDIO => Ok(media::KIND_AUDIO),
+        other => Err(AppError::new(format!("unknown media kind: {other}"))),
+    }
+}
+
+/// Fetches the results of generations that were paid for but not delivered yet. Costs nothing.
+#[tauri::command]
+async fn collect_media(state: State<'_, AppState>, story_id: i64, kind: String) -> Result<MediaInfo, AppError> {
+    collect_story(&state, story_id, media_kind(&kind)?).await?;
+    let conn = state.conn()?;
+    load_media(&state, &conn, story_id)
+}
+
+/// Gives up on a paid generation that never arrived, so it can be generated again (and paid for again).
+#[tauri::command]
+fn abandon_generation(state: State<'_, AppState>, story_id: i64, position: i64, kind: String) -> Result<MediaInfo, AppError> {
+    let conn = state.conn()?;
+    collect::abandon(&conn, story_id, position, media_kind(&kind)?)?;
+    load_media(&state, &conn, story_id)
+}
+
 /// Generates the queued narration that already has an exact price (one take each). Spends credits.
 #[tauri::command]
 async fn generate_audio_queue(
@@ -376,26 +472,11 @@ async fn generate_audio_queue(
         return Err(AppError::new("no narration is queued for generation"));
     }
     let positions: Vec<i64> = items.iter().map(|item| item.position).collect();
-    {
-        let conn = state.conn()?;
-        media_queue::mark_started(&conn, story_id, media::KIND_AUDIO, &positions)?;
-    }
-
-    let workspace = state.workspace.clone();
-    let media_dir = media::story_media_dir(&workspace, story_id);
-    let outcome = tauri::async_runtime::spawn_blocking(move || audio_queue::generate(&workspace, &media_dir, &items))
-        .await
-        .map_err(|e| AppError::new(format!("generation task failed: {e}")))
-        .and_then(|inner| inner);
-
+    launch_and_collect(&state, story_id, media::KIND_AUDIO, positions, move |workspace| {
+        audio_queue::start(workspace, &items)
+    })
+    .await?;
     let conn = state.conn()?;
-    match outcome {
-        Ok(results) => media_queue::apply_results(&conn, story_id, media::KIND_AUDIO, &results)?,
-        Err(err) => {
-            let message = format!("generation failed, credits may already have been spent: {err}");
-            media_queue::fail_started(&conn, story_id, media::KIND_AUDIO, &positions, &message)?;
-        }
-    }
     load_media(&state, &conn, story_id)
 }
 
@@ -433,7 +514,7 @@ async fn estimate_image_queue(
 
 /// Generates the queued images that already have an exact price (one take each), with scene 0 and the
 /// scene's custom reference wired in. Scene 0 goes first, so the other scenes use its new image as their
-/// anchor; if it fails, the rest stay queued. Spends credits.
+/// anchor; if it fails or is still running, the rest stay queued. Spends credits.
 #[tauri::command]
 async fn generate_image_queue(
     state: State<'_, AppState>,
@@ -459,33 +540,18 @@ async fn generate_image_queue(
         }
         generated_any = true;
         let positions: Vec<i64> = items.iter().map(|item| item.position).collect();
-        {
+        launch_and_collect(&state, story_id, media::KIND_IMAGE, positions.clone(), move |workspace| {
+            image_queue::start(workspace, &items)
+        })
+        .await?;
+        if anchor_batch {
             let conn = state.conn()?;
-            media_queue::mark_started(&conn, story_id, media::KIND_IMAGE, &positions)?;
-        }
-
-        let workspace = state.workspace.clone();
-        let media_dir = media::story_media_dir(&workspace, story_id);
-        let outcome =
-            tauri::async_runtime::spawn_blocking(move || image_queue::generate(&workspace, &media_dir, &items))
-                .await
-                .map_err(|e| AppError::new(format!("generation task failed: {e}")))
-                .and_then(|inner| inner);
-
-        let conn = state.conn()?;
-        let failed = match outcome {
-            Ok(results) => {
-                media_queue::apply_results(&conn, story_id, media::KIND_IMAGE, &results)?;
-                results.iter().any(|r| r.saved.is_err())
+            let anchor_done = media::list_assets(&conn, story_id)?.iter().any(|a| {
+                a.kind == media::KIND_IMAGE && a.position == image_queue::ANCHOR_POSITION && a.status == media::STATUS_READY
+            });
+            if !anchor_done {
+                break;
             }
-            Err(err) => {
-                let message = format!("generation failed, credits may already have been spent: {err}");
-                media_queue::fail_started(&conn, story_id, media::KIND_IMAGE, &positions, &message)?;
-                true
-            }
-        };
-        if anchor_batch && failed {
-            break;
         }
     }
     if !generated_any {
@@ -851,6 +917,8 @@ pub fn run() {
             generate_audio_queue,
             estimate_image_queue,
             generate_image_queue,
+            collect_media,
+            abandon_generation,
             set_scene_reference,
             clear_scene_reference,
             add_character,

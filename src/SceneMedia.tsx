@@ -25,6 +25,7 @@ function statusText(asset: SceneAsset | undefined): string {
   if (!asset) return "не создано";
   if (asset.status === "failed") return `ошибка: ${asset.error ?? "неизвестно"}`;
   if (asset.status === "requested") {
+    if (asset.awaiting_result) return "оплачено, результат ещё не получен";
     if (asset.in_progress) return "генерируется…";
     return asset.stale ? "в очереди (текст изменился, обновите запрос)" : "в очереди";
   }
@@ -91,6 +92,7 @@ function UpscaleRow({ asset, storyId, position, rowKey, locked, busy, onChange }
 const QUEUE_LABEL = "Поставить в очередь";
 const QUEUE_BUSY = "Ставлю в очередь…";
 const PRICE_BUSY = "Измеряю точную цену…";
+const COLLECT_BUSY = "Забираю результат… до 10 минут, кредиты не тратятся";
 const GENERATE_BUSY = "Генерирую… обычно до пары минут";
 
 interface MainAction {
@@ -119,6 +121,9 @@ function mainAction(
 ): MainAction {
   const { request, generate } = rowCalls(kind, storyId, scene.position);
   if (asset?.status !== "requested") return { label: QUEUE_LABEL, run: request, busyLabel: QUEUE_BUSY };
+  if (asset.awaiting_result) {
+    return { label: "Забрать результат", run: () => api.collectMedia(storyId, kind), busyLabel: COLLECT_BUSY };
+  }
   if (asset.in_progress) return { label: "Генерируется…", run: null, busyLabel: GENERATE_BUSY };
   if (asset.stale) return { label: "Обновить запрос", run: request, busyLabel: QUEUE_BUSY };
   const exact = asset.estimate_credits != null;
@@ -220,6 +225,26 @@ function AssetRow({ kind, scene, scenes, storyId, media, disabled, busy, onChang
           )}
         </span>
       </div>
+      {asset?.awaiting_result && (
+        <div className="muted">
+          Генерация уже оплачена. Если результат не приходит, можно{" "}
+          <button
+            type="button"
+            disabled={locked}
+            title="Следующая генерация будет оплачена заново"
+            onClick={() => {
+              if (window.confirm("Отказаться от оплаченной генерации? Новая будет стоить кредитов заново.")) {
+                onChange(() => api.abandonGeneration(storyId, scene.position, kind), {
+                  key: rowKey,
+                  label: "Отказываюсь…",
+                });
+              }
+            }}
+          >
+            отказаться и сгенерировать заново
+          </button>
+        </div>
+      )}
       {kind === "image" && asset?.status === "ready" && asset.file_path && (
         <UpscaleRow
           asset={asset}

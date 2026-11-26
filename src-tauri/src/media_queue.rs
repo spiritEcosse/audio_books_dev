@@ -14,12 +14,6 @@ pub const CONNECTOR_TOOLS: &str = "mcp__claude_ai_ElevenLabs";
 /// Cheap model: it only forwards text to tools and relays their answers.
 pub const MEDIA_MODEL: &str = "claude-haiku-5-5";
 
-/// Turn budget of a generation run before the per-item share. After the generation calls Claude polls the status
-/// tool, one turn per poll with no way to wait, and a generation takes a minute or several. The prompts allow up to
-/// 150 polls. Running out of turns or giving up while ElevenLabs is still working ends the run with the credits
-/// already spent and nothing downloaded, so this is deliberately generous: a Haiku turn costs a fraction of a cent,
-/// a repeated generation costs hundreds of credits.
-pub const GENERATE_BASE_TURNS: u32 = 170;
 const TRUSTED_HOST: &str = "elevenlabsusercontent.com";
 const TRANSFER_TIMEOUT_SECS: &str = "120";
 const IMAGE_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
@@ -112,33 +106,6 @@ pub fn parse_estimates(text: &str) -> Result<Vec<(i64, f64)>, AppError> {
         return Err(AppError::new(format!("no price returned{suffix}")));
     }
     Ok(estimates)
-}
-
-pub fn parse_outcomes(text: &str) -> Result<Vec<Outcome>, AppError> {
-    let json = extract_json(text)?;
-    let mut outcomes = Vec::new();
-    for r in json["results"].as_array().into_iter().flatten() {
-        let Some(position) = r["position"].as_i64() else { continue };
-        outcomes.push(Outcome {
-            position,
-            url: r["url"].as_str().map(str::to_owned),
-            credits: r["credits"].as_f64(),
-            prompt: r["prompt"].as_str().map(str::to_owned),
-            error: None,
-        });
-    }
-    for e in json["errors"].as_array().into_iter().flatten() {
-        let Some(position) = e["position"].as_i64() else { continue };
-        let message = e["message"].as_str().unwrap_or("unknown error");
-        outcomes.push(Outcome { position, url: None, credits: None, prompt: None, error: Some(message.to_owned()) });
-    }
-    Ok(outcomes)
-}
-
-/// The result for a scene: a successful one if Claude reported any, else its error.
-pub fn outcome_for(outcomes: &[Outcome], position: i64) -> Option<&Outcome> {
-    let own = || outcomes.iter().filter(move |o| o.position == position);
-    own().find(|o| o.url.is_some()).or_else(|| own().next())
 }
 
 /// Only https URLs on ElevenLabs' content host are fetched or written to: URLs come from model output.
@@ -278,14 +245,14 @@ pub fn apply_results(conn: &Connection, story_id: i64, kind: &str, results: &[It
             Ok(saved) => conn.execute(
                 &format!(
                     "UPDATE scene_assets SET status = 'ready', file_path = ?4, credits = ?5, error = NULL,
-                     updated_at = CURRENT_TIMESTAMP WHERE {REQUESTED}"
+                     session_id = NULL, flow_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE {REQUESTED}"
                 ),
                 params![story_id, result.position, kind, saved.path, saved.credits],
             )?,
             Err(message) => conn.execute(
                 &format!(
                     "UPDATE scene_assets SET status = 'failed', error = ?4, started_at = NULL,
-                     updated_at = CURRENT_TIMESTAMP WHERE {REQUESTED}"
+                     session_id = NULL, flow_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE {REQUESTED}"
                 ),
                 params![story_id, result.position, kind, message],
             )?,
@@ -350,16 +317,6 @@ mod tests {
         assert!(parse_estimates("} nonsense {").is_err());
     }
 
-    #[test]
-    fn parses_results_and_errors_per_position() {
-        let text = r#"{"results":[{"position":0,"url":"https://x","credits":367,"prompt":"p"}],
-                       "errors":[{"position":2,"message":"boom"}]}"#;
-        let outcomes = parse_outcomes(text).unwrap();
-        assert_eq!(outcomes.len(), 2);
-        assert_eq!(outcomes[0].credits, Some(367.0));
-        assert_eq!(outcome_for(&outcomes, 2).unwrap().error.as_deref(), Some("boom"));
-        assert!(outcome_for(&outcomes, 5).is_none());
-    }
 
     #[test]
     fn only_elevenlabs_content_https_urls_are_trusted() {

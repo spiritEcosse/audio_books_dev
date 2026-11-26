@@ -104,6 +104,8 @@ export interface SceneAsset {
   credits: number | null;
   estimate_credits: number | null;
   in_progress: boolean;
+  /** Launched and paid for, result not received yet: collect it, do not generate again. */
+  awaiting_result: boolean;
   error: string | null;
   upscaled: UpscaledFile[];
 }
@@ -213,6 +215,11 @@ export const api = {
     invoke<MediaInfo>("estimate_image_queue", { storyId, from: from ?? null, to: to ?? null }),
   generateImageQueue: (storyId: number, from?: number, to?: number) =>
     invoke<MediaInfo>("generate_image_queue", { storyId, from: from ?? null, to: to ?? null }),
+  /** Fetches the results of generations that were paid for but not delivered yet. Free. */
+  collectMedia: (storyId: number, kind: AssetKind) => invoke<MediaInfo>("collect_media", { storyId, kind }),
+  /** Gives up on a paid generation that never arrived, so it can be generated (and paid) again. */
+  abandonGeneration: (storyId: number, position: number, kind: AssetKind) =>
+    invoke<MediaInfo>("abandon_generation", { storyId, position, kind }),
   /** Upscayl + ffmpeg: writes 1080p / 4K copies next to the finished image(s); one scene, or all when no position. */
   upscaleImages: (storyId: number, resolution: Resolution, position?: number) =>
     invoke<MediaInfo>("upscale_images", { storyId, resolution, position: position ?? null }),

@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use crate::characters;
 use crate::claude;
+use crate::collect::{self, PendingItem, StartReport};
 use crate::error::AppError;
 use crate::media::{self, KIND_IMAGE};
 use crate::media_queue::{self, CONNECTOR_TOOLS, ItemResult, MEDIA_MODEL};
@@ -35,8 +36,7 @@ const GENERATE_SYSTEM: &str = r#"You operate ElevenLabs tools only and never any
 1. The task names a flow_id; use it for every call (nodes of different flows cannot be connected). If it says none, call creative_create_flow once and use that flow_id.
 2. For EVERY entry of "assets" call creative_finalize_asset_upload with its asset_id and the flow_id, in parallel in one step. Remember the node_id returned for each asset's key.
 3. For EVERY item call creative_generate_image with: prompt = the item's "prompt" copied character for character (never change, translate, fix, shorten or remove anything), model_id = the item's "model_id", flow_id, connect_from = the node_ids belonging to the keys in the item's "references" (leave connect_from out when the item has none), generations_count 1, and NO estimate_only. Make these calls in parallel in one step. Call it at most once per item: a repeated call is charged again, so never retry, even after an error. Remember which session_id belongs to which item.
-4. Call creative_get_flow_run_status with the flow_id and all session_ids. If not all_completed and not has_failures, call it again (you cannot sleep, just call again) until one of them is true. Generations can take several minutes, so keep polling for up to 150 calls in total and never stop or report a generation as unfinished before that.
-5. Reply with ONLY one JSON object and nothing else: {"results":[{"position":<int>,"url":<the generation's content_url>,"credits":<its price.credits>,"prompt":<the generation's prompt exactly as the status tool returned it>}],"errors":[{"position":<int>,"message":"<reason>"}]}"#;
+4. Do NOT wait for the generations and do NOT call creative_get_flow_run_status: the app collects the results later. Reply right away with ONLY one JSON object and nothing else: {"started":[{"position":<int>,"flow_id":"<the flow_id>","session_id":"<the session_id returned for that item's generate call>"}],"errors":[{"position":<int>,"message":"<reason>"}]}"#;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueuedImage {
@@ -167,9 +167,9 @@ fn upload_references(cwd: &Path, files: &[ReferenceFile]) -> Result<(String, Vec
     Ok((flow_id, assets))
 }
 
-/// Generates the images (one take each) with their references wired in, downloads them into `dir` and
-/// reports per scene. Spends credits. Blocking.
-pub fn generate(cwd: &Path, dir: &Path, items: &[QueuedImage]) -> Result<Vec<ItemResult>, AppError> {
+/// Launches the generations (one take each) with their references wired in. Spends credits. Answers as soon as
+/// every generation is started, with the ids to collect the results by. Blocking.
+pub fn start(cwd: &Path, items: &[QueuedImage]) -> Result<StartReport, AppError> {
     let files = reference_files(items);
     let (flow_id, assets) = if files.is_empty() {
         (None, Vec::new())
@@ -188,21 +188,51 @@ pub fn generate(cwd: &Path, dir: &Path, items: &[QueuedImage]) -> Result<Vec<Ite
         Value::Array(assets_json),
         Value::Array(items_json)
     );
-    let turns = media_queue::GENERATE_BASE_TURNS + TURNS_PER_ITEM * (items.len() + assets.len()) as u32;
+    let turns = collect::START_BASE_TURNS + TURNS_PER_ITEM * (items.len() + assets.len()) as u32;
     let reply = claude::run_connector(cwd, MEDIA_MODEL, GENERATE_SYSTEM, &prompt, CONNECTOR_TOOLS, turns)?;
-    let outcomes = media_queue::parse_outcomes(&reply.text)?;
+    collect::parse_started(&reply.text)
+}
+
+/// Starts the generations and waits for them here, without a database (there is no row to keep the ids on), then
+/// downloads the images into `dir`. Spends credits. Blocking, up to about ten minutes of waiting.
+pub fn generate(cwd: &Path, dir: &Path, items: &[QueuedImage]) -> Result<Vec<ItemResult>, AppError> {
+    let report = start(cwd, items)?;
+    let pending: Vec<PendingItem> = report
+        .started
+        .iter()
+        .filter_map(|started| {
+            let item = items.iter().find(|i| i.position == started.position)?;
+            Some(PendingItem {
+                position: started.position,
+                flow_id: started.flow_id.clone(),
+                session_id: started.session_id.clone(),
+                expected_text: item.prompt.clone(),
+                estimate_credits: item.estimate_credits,
+            })
+        })
+        .collect();
+    let collection = collect::collect_pending(cwd, dir, KIND_IMAGE, pending);
     Ok(items
         .iter()
-        .map(|item| ItemResult {
-            position: item.position,
-            saved: media_queue::save_outcome(
-                KIND_IMAGE,
-                item.position,
-                &item.prompt,
-                item.estimate_credits,
-                media_queue::outcome_for(&outcomes, item.position),
-                dir,
-            ),
+        .map(|item| {
+            let saved = collection
+                .finished
+                .iter()
+                .find(|r| r.position == item.position)
+                .map(|r| r.saved.clone())
+                .or_else(|| report.failed.iter().find(|(p, _)| *p == item.position).map(|(_, m)| Err(m.clone())))
+                .or_else(|| {
+                    collection.pending.iter().find(|p| p.position == item.position).map(|p| {
+                        Err(format!(
+                            "not finished yet; the generation is paid for (flow {}, session {})",
+                            p.flow_id, p.session_id
+                        ))
+                    })
+                })
+                .unwrap_or_else(|| {
+                    Err("Claude reported nothing for this item; credits may already have been spent".to_owned())
+                });
+            ItemResult { position: item.position, saved }
         })
         .collect())
 }
@@ -349,11 +379,11 @@ mod tests {
     }
 
     #[test]
-    fn a_single_image_with_a_reference_gets_a_long_polling_budget() {
-        // finalize the reference + generate + status polls while a ~1 min generation runs
-        let turns = media_queue::GENERATE_BASE_TURNS + TURNS_PER_ITEM * 2;
-        assert!(turns >= 160, "{turns} turns ended a real run with the image generated but not downloaded");
-        assert!(GENERATE_SYSTEM.contains("up to 150 calls"), "the prompt promises the polling the budget pays for");
+    fn the_start_prompt_launches_once_and_leaves_the_waiting_to_the_app() {
+        assert!(GENERATE_SYSTEM.contains("do NOT call creative_get_flow_run_status"));
+        assert!(GENERATE_SYSTEM.contains(r#"{"started":[{"position""#));
+        assert!(GENERATE_SYSTEM.contains("never retry"));
+        assert!(!GENERATE_SYSTEM.contains("call it again"), "a start run must not poll");
     }
 
     #[test]

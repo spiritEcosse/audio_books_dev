@@ -110,6 +110,8 @@ pub struct SceneAsset {
     pub estimate_credits: Option<f64>,
     /// Claude has started generating this queued item (it sets started_at when it launches).
     pub in_progress: bool,
+    /// Generation was launched and paid for; only its result is missing (collect it, never generate again).
+    pub awaiting_result: bool,
     pub error: Option<String>,
     /// Enlarged copies (1080p / 4K) that exist next to the image file; empty for audio.
     pub upscaled: Vec<upscale::Upscaled>,
@@ -215,6 +217,17 @@ pub fn request_asset(conn: &Connection, story_id: i64, position: i64, kind: &str
     if !KINDS.contains(&kind) {
         return Err(AppError::new(format!("unknown asset kind: {kind}")));
     }
+    let in_flight: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM scene_assets WHERE story_id = ?1 AND position = ?2 AND kind = ?3
+                       AND status = 'requested' AND started_at IS NOT NULL AND session_id IS NOT NULL)",
+        params![story_id, position, kind],
+        |row| row.get(0),
+    )?;
+    if in_flight {
+        return Err(AppError::new(
+            "this item is being generated and is already paid for: collect its result, or abandon it first",
+        ));
+    }
     let source = scene_source(conn, story_id, position, kind)?;
     let model = model_for(conn, story_id, kind)?;
     let voice = if kind == KIND_AUDIO { Some(voice_id(conn, story_id)?) } else { None };
@@ -277,7 +290,8 @@ pub fn list_assets(conn: &Connection, story_id: i64) -> Result<Vec<SceneAsset>, 
     let mut stmt = conn.prepare(
         "SELECT a.position, a.kind, a.status, a.file_path, a.model_id, a.credits, a.error, a.voice_id, a.estimate_credits,
                 a.status = 'requested' AND a.started_at IS NOT NULL,
-                COALESCE(a.source <> CASE a.kind WHEN 'image' THEN s.image_prompt ELSE s.text END, 1)
+                COALESCE(a.source <> CASE a.kind WHEN 'image' THEN s.image_prompt ELSE s.text END, 1),
+                a.status = 'requested' AND a.started_at IS NOT NULL AND a.session_id IS NOT NULL
          FROM scene_assets a
          LEFT JOIN scenes s ON s.story_id = a.story_id AND s.position = a.position
          WHERE a.story_id = ?1 ORDER BY a.position, a.kind",
@@ -301,6 +315,7 @@ pub fn list_assets(conn: &Connection, story_id: i64) -> Result<Vec<SceneAsset>, 
             estimate_credits: row.get(8)?,
             in_progress: row.get(9)?,
             stale: row.get(10)?,
+            awaiting_result: row.get(11)?,
             upscaled,
         })
     })?;

@@ -8,9 +8,10 @@ use rusqlite::Connection;
 use serde_json::{Value, json};
 
 use crate::claude;
+use crate::collect::{self, StartReport};
 use crate::error::AppError;
 use crate::media::{self, KIND_AUDIO};
-use crate::media_queue::{self, CONNECTOR_TOOLS, ItemResult, MEDIA_MODEL};
+use crate::media_queue::{self, CONNECTOR_TOOLS, MEDIA_MODEL};
 
 const ESTIMATE_BASE_TURNS: u32 = 6;
 const TURNS_PER_ITEM: u32 = 2;
@@ -24,8 +25,7 @@ const ESTIMATE_SYSTEM: &str = r#"You operate ElevenLabs tools only and never any
 const GENERATE_SYSTEM: &str = r#"You operate ElevenLabs tools only and never any other tool. Follow the steps exactly.
 1. Call creative_create_flow once and remember its flow_id.
 2. For EVERY item call creative_generate_speech with: prompt = the item's "text" copied character for character (never change, translate, fix, shorten or remove anything, including [square bracket tags]), model_id "eleven_v4", voice_id = the item's "voice_id", flow_id = the flow from step 1, generations_count 1, and NO estimate_only. Make these calls in parallel in one step. Call it at most once per item: a repeated call is charged again, so never retry, even after an error. Remember which session_id belongs to which item.
-3. Call creative_get_flow_run_status with the flow_id and all session_ids. If not all_completed and not has_failures, call it again (you cannot sleep, just call again) until one of them is true. Generations can take several minutes, so keep polling for up to 150 calls in total and never stop or report a generation as unfinished before that.
-4. Reply with ONLY one JSON object and nothing else: {"results":[{"position":<int>,"url":<the generation's content_url>,"credits":<its price.credits>,"prompt":<the generation's prompt exactly as the status tool returned it>}],"errors":[{"position":<int>,"message":"<reason>"}]}"#;
+3. Do NOT wait for the generations and do NOT call creative_get_flow_run_status: the app collects the results later. Reply right away with ONLY one JSON object and nothing else: {"started":[{"position":<int>,"flow_id":"<the flow_id>","session_id":"<the session_id returned for that item's generate call>"}],"errors":[{"position":<int>,"message":"<reason>"}]}"#;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueuedAudio {
@@ -62,27 +62,13 @@ pub fn estimate(cwd: &Path, items: &[QueuedAudio]) -> Result<Vec<(i64, f64)>, Ap
     Ok(estimates.into_iter().filter(|(position, _)| items.iter().any(|i| i.position == *position)).collect())
 }
 
-/// Generates the items (one take each), downloads the audio into `dir` and reports per scene.
-/// Spends credits. Blocking.
-pub fn generate(cwd: &Path, dir: &Path, items: &[QueuedAudio]) -> Result<Vec<ItemResult>, AppError> {
+/// Launches the generations (one take each). Spends credits. Answers as soon as every one is started, with the ids
+/// to collect the results by. Blocking.
+pub fn start(cwd: &Path, items: &[QueuedAudio]) -> Result<StartReport, AppError> {
     let prompt = media_queue::items_prompt("Generate narration for these items", items_json(items));
-    let turns = media_queue::GENERATE_BASE_TURNS + TURNS_PER_ITEM * items.len() as u32;
+    let turns = collect::START_BASE_TURNS + TURNS_PER_ITEM * items.len() as u32;
     let reply = claude::run_connector(cwd, MEDIA_MODEL, GENERATE_SYSTEM, &prompt, CONNECTOR_TOOLS, turns)?;
-    let outcomes = media_queue::parse_outcomes(&reply.text)?;
-    Ok(items
-        .iter()
-        .map(|item| ItemResult {
-            position: item.position,
-            saved: media_queue::save_outcome(
-                KIND_AUDIO,
-                item.position,
-                &item.text,
-                item.estimate_credits,
-                media_queue::outcome_for(&outcomes, item.position),
-                dir,
-            ),
-        })
-        .collect())
+    collect::parse_started(&reply.text)
 }
 
 #[cfg(test)]

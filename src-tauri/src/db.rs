@@ -189,6 +189,8 @@ pub fn init(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch(SCHEMA)?;
     ensure_column(conn, "scene_assets", "estimate_credits", "REAL")?;
     ensure_column(conn, "scene_assets", "started_at", "TEXT")?;
+    ensure_column(conn, "scene_assets", "session_id", "TEXT")?;
+    ensure_column(conn, "scene_assets", "flow_id", "TEXT")?;
     Ok(())
 }
 
