@@ -18,14 +18,15 @@ A Tauri 2 desktop app (Rust backend + React 19/TypeScript/Vite frontend, pnpm) f
 
 ## Workflow (every feature or fix)
 
-All changes reach `dev` through a pull request. Never commit or push to `dev` directly. This rule is standing approval to commit, push the task branch, open its PR, enable auto-merge and clean up afterwards.
+All changes reach `main` through a pull request. Never commit, merge or push to `main` directly. This rule is standing approval to create the issue, commit, push the task branch, open its PR, enable auto-merge and clean up afterwards.
 
-0. If there is no GitHub remote, create the repository with `gh repo create`; ask whether it is public or private first. This one is `spiritEcosse/audio_books_dev` (public, default branch `dev`).
-1. Work in a separate worktree, one per task: `git fetch origin && git worktree add .claude/worktrees/<name> -b <type>/<name> origin/dev` (`<type>`: feat, fix, chore, ...). A fresh worktree has no untracked files: run `pnpm install`, and for `pnpm tauri dev` copy `.env` and run `scripts/fetch-upscayl.sh`.
-2. Run `pnpm build` and `cargo test` in the worktree, commit, then `git push -u origin HEAD`.
-3. `gh pr create --base dev`, then `gh pr merge --auto --squash`. GitHub merges once the `checks` job (`.github/workflows/ci.yml`) passes and deletes the remote branch.
-4. Watch with `gh pr checks --watch`. If a check fails, fix it in the same worktree and push again; never bypass the check.
-5. Only after `gh pr view --json state` reports `MERGED`: from the main checkout run `git pull --ff-only` on `dev`, `git worktree remove .claude/worktrees/<name>` and `git branch -D <type>/<name>`. If the worktree has uncommitted files, ask instead of forcing removal.
+0. If there is no GitHub remote, create the repository with `gh repo create`; ask whether it is public or private first. This one is `spiritEcosse/audio_books_dev` (public, default branch `main`).
+1. A new feature requires a GitHub issue: if none exists, `gh issue create` before starting. Reference it in commits (`refs #N`) and in the PR body (`Closes #N`).
+2. Every feature and fix gets its own worktree next to the repository: `git fetch origin && git worktree add ../worktrees/<name> -b <type>/<name> origin/main` (`<type>`: feat, fix, chore, ...). A fresh worktree has no untracked files: run `pnpm install`, and for `pnpm tauri dev` copy `.env` and run `scripts/fetch-upscayl.sh`.
+3. Run `pnpm build` and `cargo test` in the worktree, commit, then `git push -u origin HEAD`.
+4. `gh pr create --base main`, then `gh pr merge --auto --merge`. GitHub merges once the `checks` job (`.github/workflows/ci.yml`) passes and deletes the remote branch.
+5. Watch with `gh pr checks --watch`. If a check fails, fix it in the same worktree and push again; never bypass the check.
+6. Only after `gh pr view --json state` reports `MERGED`: from the main checkout run `git pull --ff-only` on `main`, `git worktree remove ../worktrees/<name>` and `git branch -d <type>/<name>`. If the worktree has uncommitted files, ask instead of forcing removal.
 
 The repository is public: never commit keys, `.env`, databases or the user's stories and media.
 
