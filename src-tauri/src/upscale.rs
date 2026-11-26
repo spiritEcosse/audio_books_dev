@@ -82,7 +82,10 @@ pub fn existing_versions(image: &Path) -> Vec<Upscaled> {
         .into_iter()
         .filter_map(|resolution| {
             let path = upscaled_path(image, resolution);
-            path.is_file().then(|| Upscaled { label: resolution.label(), file_path: path.display().to_string() })
+            path.is_file().then(|| Upscaled {
+                label: resolution.label(),
+                file_path: path.display().to_string(),
+            })
         })
         .collect()
 }
@@ -105,7 +108,9 @@ fn upscayl_args(input: &Path, output: &Path, scale: u32, models: &Path) -> Vec<O
 }
 
 fn fit_filter(width: u32, height: u32) -> String {
-    format!("scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,crop={width}:{height}")
+    format!(
+        "scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,crop={width}:{height}"
+    )
 }
 
 fn ffmpeg_args(input: &Path, output: &Path, resolution: Resolution) -> Vec<OsString> {
@@ -139,11 +144,17 @@ pub fn find_tools(roots: &[PathBuf]) -> Result<Tools, AppError> {
         .ok_or_else(|| AppError::new(format!("Upscayl is not installed: {FETCH_HINT}")))?;
     let models = dir.join(MODELS_DIR);
     if !models.join(format!("{MODEL_NAME}.param")).is_file() {
-        return Err(AppError::new(format!("the {MODEL_NAME} model is missing: {FETCH_HINT}")));
+        return Err(AppError::new(format!(
+            "the {MODEL_NAME} model is missing: {FETCH_HINT}"
+        )));
     }
     let ffmpeg = claude::find_in_login_shell("ffmpeg")?
         .ok_or_else(|| AppError::new("ffmpeg not found. Install it, e.g. brew install ffmpeg"))?;
-    Ok(Tools { upscayl: dir.join(UPSCAYL_BIN), models, ffmpeg })
+    Ok(Tools {
+        upscayl: dir.join(UPSCAYL_BIN),
+        models,
+        ffmpeg,
+    })
 }
 
 fn run_tool(program: &Path, args: &[OsString], name: &str) -> Result<(), AppError> {
@@ -155,25 +166,49 @@ fn run_tool(program: &Path, args: &[OsString], name: &str) -> Result<(), AppErro
         return Ok(());
     }
     let log = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    let tail: String = log.chars().rev().take(ERROR_TAIL_CHARS).collect::<Vec<_>>().into_iter().rev().collect();
-    Err(AppError::new(format!("{name} failed ({}): {tail}", output.status)))
+    let tail: String = log
+        .chars()
+        .rev()
+        .take(ERROR_TAIL_CHARS)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    Err(AppError::new(format!(
+        "{name} failed ({}): {tail}",
+        output.status
+    )))
 }
 
-fn enlarge(image: &Path, resolution: Resolution, tools: &Tools, raw: &Path, part: &Path) -> Result<(), AppError> {
-    run_tool(&tools.upscayl, &upscayl_args(image, raw, resolution.scale(), &tools.models), "Upscayl")?;
+fn enlarge(
+    image: &Path,
+    resolution: Resolution,
+    tools: &Tools,
+    raw: &Path,
+    part: &Path,
+) -> Result<(), AppError> {
+    run_tool(
+        &tools.upscayl,
+        &upscayl_args(image, raw, resolution.scale(), &tools.models),
+        "Upscayl",
+    )?;
     run_tool(&tools.ffmpeg, &ffmpeg_args(raw, part, resolution), "ffmpeg")
 }
 
 /// Enlarges one image to the exact size and returns the new file. Blocking: about 25 seconds per image.
 pub fn upscale(image: &Path, resolution: Resolution, tools: &Tools) -> Result<PathBuf, AppError> {
     if !image.is_file() {
-        return Err(AppError::new(format!("image not found: {}", image.display())));
+        return Err(AppError::new(format!(
+            "image not found: {}",
+            image.display()
+        )));
     }
     let target = upscaled_path(image, resolution);
     let raw = target.with_extension("raw.png");
     let part = target.with_extension("part.png");
     let result = enlarge(image, resolution, tools, &raw, &part).and_then(|()| {
-        std::fs::rename(&part, &target).map_err(|e| AppError::new(format!("cannot save {}: {e}", target.display())))
+        std::fs::rename(&part, &target)
+            .map_err(|e| AppError::new(format!("cannot save {}: {e}", target.display())))
     });
     let _ = std::fs::remove_file(&raw);
     let _ = std::fs::remove_file(&part);
@@ -185,7 +220,8 @@ mod tests {
     use super::*;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("audiobooks-upscale-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("audiobooks-upscale-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -209,8 +245,14 @@ mod tests {
     #[test]
     fn upscaled_path_sits_next_to_the_image_with_the_label() {
         let image = Path::new("/media/7/scene-0-image-v1.webp");
-        assert_eq!(upscaled_path(image, Resolution::Hd), Path::new("/media/7/scene-0-image-v1-1080p.png"));
-        assert_eq!(upscaled_path(image, Resolution::Uhd), Path::new("/media/7/scene-0-image-v1-4k.png"));
+        assert_eq!(
+            upscaled_path(image, Resolution::Hd),
+            Path::new("/media/7/scene-0-image-v1-1080p.png")
+        );
+        assert_eq!(
+            upscaled_path(image, Resolution::Uhd),
+            Path::new("/media/7/scene-0-image-v1-4k.png")
+        );
     }
 
     #[test]
@@ -223,15 +265,42 @@ mod tests {
 
     #[test]
     fn upscayl_args_name_the_model_scale_and_models_folder() {
-        let args = upscayl_args(Path::new("in.webp"), Path::new("out.png"), 4, Path::new("/m"));
-        let text: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
-        assert_eq!(text, ["-i", "in.webp", "-o", "out.png", "-s", "4", "-n", "digital-art-4x", "-m", "/m", "-f", "png"]);
+        let args = upscayl_args(
+            Path::new("in.webp"),
+            Path::new("out.png"),
+            4,
+            Path::new("/m"),
+        );
+        let text: Vec<String> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            text,
+            [
+                "-i",
+                "in.webp",
+                "-o",
+                "out.png",
+                "-s",
+                "4",
+                "-n",
+                "digital-art-4x",
+                "-m",
+                "/m",
+                "-f",
+                "png"
+            ]
+        );
     }
 
     #[test]
     fn ffmpeg_args_overwrite_quietly_and_end_with_the_output() {
         let args = ffmpeg_args(Path::new("raw.png"), Path::new("out.png"), Resolution::Uhd);
-        let text: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let text: Vec<String> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(&text[..5], ["-y", "-v", "error", "-i", "raw.png"]);
         assert!(text[6].contains("crop=3840:2160"));
         assert_eq!(text.last().unwrap(), "out.png");
@@ -260,8 +329,13 @@ mod tests {
 
     #[test]
     fn upscale_rejects_a_missing_image() {
-        let tools = Tools { upscayl: "u".into(), models: "m".into(), ffmpeg: "f".into() };
-        let err = upscale(Path::new("/nonexistent/scene.webp"), Resolution::Hd, &tools).unwrap_err();
+        let tools = Tools {
+            upscayl: "u".into(),
+            models: "m".into(),
+            ffmpeg: "f".into(),
+        };
+        let err =
+            upscale(Path::new("/nonexistent/scene.webp"), Resolution::Hd, &tools).unwrap_err();
         assert!(err.to_string().contains("image not found"));
     }
 
@@ -269,13 +343,26 @@ mod tests {
     #[test]
     #[ignore]
     fn upscale_produces_the_exact_size_for_16_9_and_square_sources() {
-        let roots = [PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/resources"))];
+        let roots = [PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/resources"
+        ))];
         let tools = find_tools(&roots).unwrap();
         let dir = temp_dir("real");
         for (name, size) in [("wide", "512x288"), ("square", "256x256")] {
             let image = dir.join(format!("{name}.png"));
             let made = Command::new(&tools.ffmpeg)
-                .args(["-y", "-v", "error", "-f", "lavfi", "-i", &format!("testsrc=size={size}:rate=1"), "-frames:v", "1"])
+                .args([
+                    "-y",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    &format!("testsrc=size={size}:rate=1"),
+                    "-frames:v",
+                    "1",
+                ])
                 .arg(&image)
                 .status()
                 .unwrap();
@@ -283,12 +370,23 @@ mod tests {
             for resolution in Resolution::ALL {
                 let out = upscale(&image, resolution, &tools).unwrap();
                 let probe = Command::new("ffprobe")
-                    .args(["-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0"])
+                    .args([
+                        "-v",
+                        "error",
+                        "-show_entries",
+                        "stream=width,height",
+                        "-of",
+                        "csv=p=0",
+                    ])
                     .arg(&out)
                     .output()
                     .unwrap();
                 let (w, h) = resolution.size();
-                assert_eq!(String::from_utf8_lossy(&probe.stdout).trim(), format!("{w},{h}"), "{name} {resolution:?}");
+                assert_eq!(
+                    String::from_utf8_lossy(&probe.stdout).trim(),
+                    format!("{w},{h}"),
+                    "{name} {resolution:?}"
+                );
             }
             assert!(!dir.join(format!("{name}-1080p.raw.png")).exists());
         }

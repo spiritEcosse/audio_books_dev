@@ -5,8 +5,8 @@ use serde_json::json;
 
 use crate::claude;
 use crate::db::{Message, NewScene, Scene, Story, StorySettings};
-use crate::profiles::Profile;
 use crate::error::AppError;
+use crate::profiles::Profile;
 
 const BASE_SYSTEM_PROMPT: &str = "You are the editing assistant inside an audiobook video app. \
 The user chats with you about one story. A story is split into scenes for an illustrated, \
@@ -28,7 +28,10 @@ const AUDIENCE_GUIDE: &str = include_str!("../prompts/audience.md");
 
 /// Base chat protocol, audience rules and the story's writing profile: the system prompt of every turn.
 fn system_prompt(profile: &Profile) -> String {
-    format!("{BASE_SYSTEM_PROMPT}\n\n{AUDIENCE_GUIDE}\n\n{}", profile.body)
+    format!(
+        "{BASE_SYSTEM_PROMPT}\n\n{AUDIENCE_GUIDE}\n\n{}",
+        profile.body
+    )
 }
 
 /// Everything one chat turn needs.
@@ -85,7 +88,11 @@ pub struct ParsedReply {
 
 impl ParsedReply {
     fn plain(text: &str) -> Self {
-        Self { reply: text.trim().to_owned(), scenes: None, story_text: None }
+        Self {
+            reply: text.trim().to_owned(),
+            scenes: None,
+            story_text: None,
+        }
     }
 }
 
@@ -98,7 +105,12 @@ pub fn with_notes(notes: &[String], text: &str) -> String {
     format!("<app_notes>\n{}\n</app_notes>\n{text}", lines.join("\n"))
 }
 
-fn state_block(story: &Story, scenes: &[Scene], settings: &StorySettings, profile: &Profile) -> String {
+fn state_block(
+    story: &Story,
+    scenes: &[Scene],
+    settings: &StorySettings,
+    profile: &Profile,
+) -> String {
     let scenes_json = json!(
         scenes
             .iter()
@@ -107,14 +119,29 @@ fn state_block(story: &Story, scenes: &[Scene], settings: &StorySettings, profil
     );
     format!(
         "<story_settings audience=\"{}\" target_minutes=\"{}\" profile=\"{}\"/>\n<story title=\"{}\">\n{}\n</story>\n<current_scenes>\n{}\n</current_scenes>",
-        settings.age_group, settings.target_minutes, profile.label, story.title, story.text, scenes_json
+        settings.age_group,
+        settings.target_minutes,
+        profile.label,
+        story.title,
+        story.text,
+        scenes_json
     )
 }
 
 fn transcript(history: &[Message]) -> String {
     history
         .iter()
-        .map(|m| format!("{}: {}", if m.role == "user" { "User" } else { "Assistant" }, m.content))
+        .map(|m| {
+            format!(
+                "{}: {}",
+                if m.role == "user" {
+                    "User"
+                } else {
+                    "Assistant"
+                },
+                m.content
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -128,7 +155,10 @@ fn fresh_session_prompt(input: &TurnInput<'_>) -> String {
             transcript(input.history)
         ));
     }
-    prompt.push_str(&format!("\n<user_message>\n{}\n</user_message>", input.user_text));
+    prompt.push_str(&format!(
+        "\n<user_message>\n{}\n</user_message>",
+        input.user_text
+    ));
     prompt
 }
 
@@ -138,7 +168,13 @@ fn fresh_session_prompt(input: &TurnInput<'_>) -> String {
 pub fn run_turn(input: &TurnInput<'_>) -> Result<Turn, AppError> {
     let system = system_prompt(input.profile);
     let fresh = |system: &str| {
-        claude::run(input.cwd, input.model, system, &fresh_session_prompt(input), None)
+        claude::run(
+            input.cwd,
+            input.model,
+            system,
+            &fresh_session_prompt(input),
+            None,
+        )
     };
     let reply = match input.session_id {
         Some(id) => match claude::run(input.cwd, input.model, &system, input.user_text, Some(id)) {
@@ -164,11 +200,20 @@ mod tests {
     use super::*;
 
     fn profile(body: &str) -> Profile {
-        Profile { id: "p".into(), label: "Label".into(), builtin: true, body: body.into() }
+        Profile {
+            id: "p".into(),
+            label: "Label".into(),
+            builtin: true,
+            body: body.into(),
+        }
     }
 
     fn settings() -> StorySettings {
-        StorySettings { target_minutes: 7, age_group: "up_to_5".into(), profile: "p".into() }
+        StorySettings {
+            target_minutes: 7,
+            age_group: "up_to_5".into(),
+            profile: "p".into(),
+        }
     }
 
     #[test]
@@ -225,12 +270,18 @@ mod tests {
     fn notes_are_prefixed_only_when_present() {
         assert_eq!(with_notes(&[], "hi"), "hi");
         let text = with_notes(&["did X".into()], "hi");
-        assert!(text.starts_with("<app_notes>") && text.contains("- did X") && text.ends_with("hi"));
+        assert!(
+            text.starts_with("<app_notes>") && text.contains("- did X") && text.ends_with("hi")
+        );
     }
 
     #[test]
     fn fresh_prompt_includes_settings_story_history_and_message() {
-        let story = Story { id: 1, title: "T".into(), text: "body".into() };
+        let story = Story {
+            id: 1,
+            title: "T".into(),
+            text: "body".into(),
+        };
         let history = [Message {
             id: 1,
             role: "user".into(),
@@ -254,6 +305,8 @@ mod tests {
         let prompt = fresh_session_prompt(&input);
 
         assert!(prompt.contains("audience=\"up_to_5\"") && prompt.contains("target_minutes=\"7\""));
-        assert!(prompt.contains("body") && prompt.contains("User: earlier") && prompt.contains("now"));
+        assert!(
+            prompt.contains("body") && prompt.contains("User: earlier") && prompt.contains("now")
+        );
     }
 }

@@ -80,17 +80,28 @@ pub fn parse_started(text: &str) -> Result<StartReport, AppError> {
         .into_iter()
         .flatten()
         .filter_map(|s| {
-            Some(Started { position: s["position"].as_i64()?, flow_id: id(&s["flow_id"])?, session_id: id(&s["session_id"])? })
+            Some(Started {
+                position: s["position"].as_i64()?,
+                flow_id: id(&s["flow_id"])?,
+                session_id: id(&s["session_id"])?,
+            })
         })
         .collect();
     let failed: Vec<(i64, String)> = json["errors"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|e| Some((e["position"].as_i64()?, e["message"].as_str().unwrap_or("unknown error").to_owned())))
+        .filter_map(|e| {
+            Some((
+                e["position"].as_i64()?,
+                e["message"].as_str().unwrap_or("unknown error").to_owned(),
+            ))
+        })
         .collect();
     if started.is_empty() && failed.is_empty() {
-        return Err(AppError::new("Claude reported neither a started generation nor an error"));
+        return Err(AppError::new(
+            "Claude reported neither a started generation nor an error",
+        ));
     }
     Ok(StartReport { started, failed })
 }
@@ -114,7 +125,12 @@ pub fn parse_collected(text: &str) -> Result<Vec<(i64, Collected)>, AppError> {
                     }),
                     None => Collected::Pending,
                 },
-                Some("failed") => Collected::Failed(r["message"].as_str().unwrap_or("the generation failed").to_owned()),
+                Some("failed") => Collected::Failed(
+                    r["message"]
+                        .as_str()
+                        .unwrap_or("the generation failed")
+                        .to_owned(),
+                ),
                 _ => Collected::Pending,
             };
             Some((position, collected))
@@ -126,11 +142,20 @@ pub fn parse_collected(text: &str) -> Result<Vec<(i64, Collected)>, AppError> {
 pub fn fetch_status(cwd: &Path, items: &[PendingItem]) -> Result<Vec<(i64, Collected)>, AppError> {
     let list: Vec<Value> = items
         .iter()
-        .map(|i| json!({ "position": i.position, "flow_id": i.flow_id, "session_id": i.session_id }))
+        .map(
+            |i| json!({ "position": i.position, "flow_id": i.flow_id, "session_id": i.session_id }),
+        )
         .collect();
     let prompt = media_queue::items_prompt("Report the state of these generations", list);
     let turns = COLLECT_BASE_TURNS + COLLECT_TURNS_PER_ITEM * items.len() as u32;
-    let reply = claude::run_connector(cwd, MEDIA_MODEL, COLLECT_SYSTEM, &prompt, CONNECTOR_TOOLS, turns)?;
+    let reply = claude::run_connector(
+        cwd,
+        MEDIA_MODEL,
+        COLLECT_SYSTEM,
+        &prompt,
+        CONNECTOR_TOOLS,
+        turns,
+    )?;
     parse_collected(&reply.text)
 }
 
@@ -168,12 +193,22 @@ pub fn collect_until_done(
         };
         let mut still_pending = Vec::new();
         for item in pending {
-            match states.iter().find(|(position, _)| *position == item.position).map(|(_, state)| state) {
+            match states
+                .iter()
+                .find(|(position, _)| *position == item.position)
+                .map(|(_, state)| state)
+            {
                 Some(Collected::Completed(outcome)) => {
-                    finished.push(ItemResult { position: item.position, saved: finish(&item, outcome) });
+                    finished.push(ItemResult {
+                        position: item.position,
+                        saved: finish(&item, outcome),
+                    });
                 }
                 Some(Collected::Failed(message)) => {
-                    finished.push(ItemResult { position: item.position, saved: Err(message.clone()) });
+                    finished.push(ItemResult {
+                        position: item.position,
+                        saved: Err(message.clone()),
+                    });
                 }
                 _ => still_pending.push(item),
             }
@@ -190,7 +225,14 @@ pub fn collect_pending(cwd: &Path, dir: &Path, kind: &str, items: Vec<PendingIte
         items,
         |pending| fetch_status(cwd, pending),
         |item, outcome| {
-            media_queue::save_outcome(kind, item.position, &item.expected_text, item.estimate_credits, Some(outcome), dir)
+            media_queue::save_outcome(
+                kind,
+                item.position,
+                &item.expected_text,
+                item.estimate_credits,
+                Some(outcome),
+                dir,
+            )
         },
         || std::thread::sleep(POLL_INTERVAL),
         MAX_ROUNDS,
@@ -198,7 +240,12 @@ pub fn collect_pending(cwd: &Path, dir: &Path, kind: &str, items: Vec<PendingIte
 }
 
 /// Remembers where to collect each launched generation. From here on the item is paid for and never launched again.
-pub fn save_started(conn: &Connection, story_id: i64, kind: &str, started: &[Started]) -> Result<(), AppError> {
+pub fn save_started(
+    conn: &Connection,
+    story_id: i64,
+    kind: &str,
+    started: &[Started],
+) -> Result<(), AppError> {
     for item in started {
         conn.execute(
             "UPDATE scene_assets SET session_id = ?4, flow_id = ?5
@@ -210,7 +257,11 @@ pub fn save_started(conn: &Connection, story_id: i64, kind: &str, started: &[Sta
 }
 
 /// Launched generations of a story that are still waiting to be collected.
-pub fn pending_items(conn: &Connection, story_id: i64, kind: &str) -> Result<Vec<PendingItem>, AppError> {
+pub fn pending_items(
+    conn: &Connection,
+    story_id: i64,
+    kind: &str,
+) -> Result<Vec<PendingItem>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT position, source, estimate_credits, session_id, flow_id FROM scene_assets
          WHERE story_id = ?1 AND kind = ?2 AND status = ?3 AND started_at IS NOT NULL AND session_id IS NOT NULL
@@ -229,7 +280,12 @@ pub fn pending_items(conn: &Connection, story_id: i64, kind: &str) -> Result<Vec
 }
 
 /// Gives up on a paid generation that never arrived, so the item can be generated again (and paid for again).
-pub fn abandon(conn: &Connection, story_id: i64, position: i64, kind: &str) -> Result<(), AppError> {
+pub fn abandon(
+    conn: &Connection,
+    story_id: i64,
+    position: i64,
+    kind: &str,
+) -> Result<(), AppError> {
     let changed = conn.execute(
         "UPDATE scene_assets SET status = 'failed', started_at = NULL, session_id = NULL, flow_id = NULL,
              error = 'abandoned: the paid generation was never collected', updated_at = CURRENT_TIMESTAMP
@@ -276,7 +332,10 @@ mod tests {
     }
 
     fn saved(item: &PendingItem, _outcome: &Outcome) -> Result<Saved, String> {
-        Ok(Saved { path: format!("/m/{}.png", item.position), credits: 1.0 })
+        Ok(Saved {
+            path: format!("/m/{}.png", item.position),
+            credits: 1.0,
+        })
     }
 
     #[test]
@@ -297,7 +356,14 @@ mod tests {
             MAX_ROUNDS,
         );
 
-        assert_eq!(collection.finished.iter().map(|r| r.position).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(
+            collection
+                .finished
+                .iter()
+                .map(|r| r.position)
+                .collect::<Vec<_>>(),
+            [1, 2]
+        );
         assert!(collection.pending.is_empty());
         assert_eq!(waits, 2, "no wait before the first check");
     }
@@ -323,9 +389,20 @@ mod tests {
     #[test]
     fn a_failed_generation_becomes_an_error_result_and_is_not_asked_about_again() {
         let mut script = vec![vec![(1, Collected::Failed("moderated".into()))]].into_iter();
-        let collection =
-            collect_until_done(vec![item(1)], |_| Ok(script.next().unwrap()), saved, || {}, MAX_ROUNDS);
-        assert_eq!(collection.finished, [ItemResult { position: 1, saved: Err("moderated".into()) }]);
+        let collection = collect_until_done(
+            vec![item(1)],
+            |_| Ok(script.next().unwrap()),
+            saved,
+            || {},
+            MAX_ROUNDS,
+        );
+        assert_eq!(
+            collection.finished,
+            [ItemResult {
+                position: 1,
+                saved: Err("moderated".into())
+            }]
+        );
         assert!(collection.pending.is_empty());
     }
 
@@ -336,7 +413,11 @@ mod tests {
             vec![item(1)],
             |_| {
                 calls += 1;
-                if calls == 1 { Err(AppError::new("claude exited")) } else { Ok(vec![pending(1)]) }
+                if calls == 1 {
+                    Err(AppError::new("claude exited"))
+                } else {
+                    Ok(vec![pending(1)])
+                }
             },
             saved,
             || {},
@@ -357,12 +438,22 @@ mod tests {
             MAX_ROUNDS,
         );
         assert_eq!(always_failing, MAX_CONSECUTIVE_FAILURES);
-        assert_eq!(collection.pending.len(), 1, "the paid generation stays collectable");
+        assert_eq!(
+            collection.pending.len(),
+            1,
+            "the paid generation stays collectable"
+        );
     }
 
     #[test]
     fn an_item_missing_from_the_answer_stays_pending() {
-        let collection = collect_until_done(vec![item(1), item(2)], |_| Ok(vec![completed(1)]), saved, || {}, 1);
+        let collection = collect_until_done(
+            vec![item(1), item(2)],
+            |_| Ok(vec![completed(1)]),
+            saved,
+            || {},
+            1,
+        );
         assert_eq!(collection.finished.len(), 1);
         assert_eq!(collection.pending, [item(2)]);
     }
@@ -372,7 +463,13 @@ mod tests {
         let collection = collect_until_done(
             vec![item(1), item(2)],
             |_| Ok(vec![completed(1), completed(2)]),
-            |item, outcome| if item.position == 1 { Err("download failed".into()) } else { saved(item, outcome) },
+            |item, outcome| {
+                if item.position == 1 {
+                    Err("download failed".into())
+                } else {
+                    saved(item, outcome)
+                }
+            },
             || {},
             1,
         );
@@ -387,7 +484,14 @@ mod tests {
                 "errors":[{"position":2,"message":"moderated"}]}"#,
         )
         .unwrap();
-        assert_eq!(report.started, [Started { position: 0, flow_id: "f".into(), session_id: "s0".into() }]);
+        assert_eq!(
+            report.started,
+            [Started {
+                position: 0,
+                flow_id: "f".into(),
+                session_id: "s0".into()
+            }]
+        );
         assert_eq!(report.failed, [(2, "moderated".to_owned())]);
         assert!(parse_started(r#"{"started":[],"errors":[]}"#).is_err());
         assert!(parse_started("no json here").is_err());
@@ -403,8 +507,14 @@ mod tests {
               {"position":3,"state":"generating"}]}"#,
         )
         .unwrap();
-        assert!(matches!(&states[0], (0, Collected::Completed(o)) if o.url.as_deref() == Some("https://a/b.png")));
-        assert_eq!(states[1], (1, Collected::Pending), "completed without a link is not usable yet");
+        assert!(
+            matches!(&states[0], (0, Collected::Completed(o)) if o.url.as_deref() == Some("https://a/b.png"))
+        );
+        assert_eq!(
+            states[1],
+            (1, Collected::Pending),
+            "completed without a link is not usable yet"
+        );
         assert_eq!(states[2], (2, Collected::Failed("moderated".into())));
         assert_eq!(states[3], (3, Collected::Pending));
     }
@@ -419,7 +529,10 @@ mod tests {
         let mut conn = Connection::open_in_memory().unwrap();
         db::init(&conn).unwrap();
         let story = db::create_story(&conn, "t", "body").unwrap();
-        let scenes = [NewScene { text: "a".into(), image_prompt: "draw a".into() }];
+        let scenes = [NewScene {
+            text: "a".into(),
+            image_prompt: "draw a".into(),
+        }];
         db::replace_scenes(&mut conn, story.id, &scenes).unwrap();
         media::request_asset(&conn, story.id, 0, KIND_IMAGE).unwrap();
         (conn, story.id)
@@ -429,41 +542,95 @@ mod tests {
     fn launched_generations_keep_their_ids_until_a_result_is_applied() {
         let (conn, story) = setup();
         media_queue::mark_started(&conn, story, KIND_IMAGE, &[0]).unwrap();
-        save_started(&conn, story, KIND_IMAGE, &[Started { position: 0, flow_id: "f".into(), session_id: "s".into() }])
-            .unwrap();
+        save_started(
+            &conn,
+            story,
+            KIND_IMAGE,
+            &[Started {
+                position: 0,
+                flow_id: "f".into(),
+                session_id: "s".into(),
+            }],
+        )
+        .unwrap();
 
         let pending = pending_items(&conn, story, KIND_IMAGE).unwrap();
         assert_eq!(pending.len(), 1);
-        assert_eq!((pending[0].flow_id.as_str(), pending[0].session_id.as_str()), ("f", "s"));
+        assert_eq!(
+            (pending[0].flow_id.as_str(), pending[0].session_id.as_str()),
+            ("f", "s")
+        );
         assert_eq!(pending[0].expected_text, "draw a");
 
-        let results = [ItemResult { position: 0, saved: Ok(Saved { path: "/m/a.png".into(), credits: 3.0 }) }];
+        let results = [ItemResult {
+            position: 0,
+            saved: Ok(Saved {
+                path: "/m/a.png".into(),
+                credits: 3.0,
+            }),
+        }];
         media_queue::apply_results(&conn, story, KIND_IMAGE, &results).unwrap();
         assert!(pending_items(&conn, story, KIND_IMAGE).unwrap().is_empty());
         let ids: (Option<String>, Option<String>) = conn
-            .query_row("SELECT session_id, flow_id FROM scene_assets WHERE story_id = ?1", [story], |r| Ok((r.get(0)?, r.get(1)?)))
+            .query_row(
+                "SELECT session_id, flow_id FROM scene_assets WHERE story_id = ?1",
+                [story],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .unwrap();
-        assert_eq!(ids, (None, None), "ids are cleared once the result is saved");
+        assert_eq!(
+            ids,
+            (None, None),
+            "ids are cleared once the result is saved"
+        );
     }
 
     #[test]
     fn an_item_with_a_saved_session_is_never_queued_or_generated_again() {
         let (conn, story) = setup();
         media_queue::mark_started(&conn, story, KIND_IMAGE, &[0]).unwrap();
-        save_started(&conn, story, KIND_IMAGE, &[Started { position: 0, flow_id: "f".into(), session_id: "s".into() }])
-            .unwrap();
+        save_started(
+            &conn,
+            story,
+            KIND_IMAGE,
+            &[Started {
+                position: 0,
+                flow_id: "f".into(),
+                session_id: "s".into(),
+            }],
+        )
+        .unwrap();
 
-        assert!(media::request_asset(&conn, story, 0, KIND_IMAGE).is_err(), "re-requesting would pay twice");
-        assert!(media_queue::queued_rows(&conn, story, KIND_IMAGE).unwrap().is_empty());
+        assert!(
+            media::request_asset(&conn, story, 0, KIND_IMAGE).is_err(),
+            "re-requesting would pay twice"
+        );
+        assert!(
+            media_queue::queued_rows(&conn, story, KIND_IMAGE)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
     fn abandoning_frees_the_item_and_forgets_the_ids() {
         let (conn, story) = setup();
-        assert!(abandon(&conn, story, 0, KIND_IMAGE).is_err(), "nothing was started yet");
+        assert!(
+            abandon(&conn, story, 0, KIND_IMAGE).is_err(),
+            "nothing was started yet"
+        );
         media_queue::mark_started(&conn, story, KIND_IMAGE, &[0]).unwrap();
-        save_started(&conn, story, KIND_IMAGE, &[Started { position: 0, flow_id: "f".into(), session_id: "s".into() }])
-            .unwrap();
+        save_started(
+            &conn,
+            story,
+            KIND_IMAGE,
+            &[Started {
+                position: 0,
+                flow_id: "f".into(),
+                session_id: "s".into(),
+            }],
+        )
+        .unwrap();
 
         abandon(&conn, story, 0, KIND_IMAGE).unwrap();
 

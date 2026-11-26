@@ -50,16 +50,32 @@ pub fn queued_audio(conn: &Connection, story_id: i64) -> Result<Vec<QueuedAudio>
 }
 
 fn items_json(items: &[QueuedAudio]) -> Vec<Value> {
-    items.iter().map(|i| json!({ "position": i.position, "text": i.text, "voice_id": i.voice_id })).collect()
+    items
+        .iter()
+        .map(|i| json!({ "position": i.position, "text": i.text, "voice_id": i.voice_id }))
+        .collect()
 }
 
 /// Exact prices (estimate_only, nothing is charged) for the queued narration. Blocking.
 pub fn estimate(cwd: &Path, items: &[QueuedAudio]) -> Result<Vec<(i64, f64)>, AppError> {
-    let prompt = media_queue::items_prompt("Estimate the price of these narration items", items_json(items));
+    let prompt = media_queue::items_prompt(
+        "Estimate the price of these narration items",
+        items_json(items),
+    );
     let turns = ESTIMATE_BASE_TURNS + TURNS_PER_ITEM * items.len() as u32;
-    let reply = claude::run_connector(cwd, MEDIA_MODEL, ESTIMATE_SYSTEM, &prompt, CONNECTOR_TOOLS, turns)?;
+    let reply = claude::run_connector(
+        cwd,
+        MEDIA_MODEL,
+        ESTIMATE_SYSTEM,
+        &prompt,
+        CONNECTOR_TOOLS,
+        turns,
+    )?;
     let estimates = media_queue::parse_estimates(&reply.text)?;
-    Ok(estimates.into_iter().filter(|(position, _)| items.iter().any(|i| i.position == *position)).collect())
+    Ok(estimates
+        .into_iter()
+        .filter(|(position, _)| items.iter().any(|i| i.position == *position))
+        .collect())
 }
 
 /// Launches the generations (one take each). Spends credits. Answers as soon as every one is started, with the ids
@@ -67,7 +83,14 @@ pub fn estimate(cwd: &Path, items: &[QueuedAudio]) -> Result<Vec<(i64, f64)>, Ap
 pub fn start(cwd: &Path, items: &[QueuedAudio]) -> Result<StartReport, AppError> {
     let prompt = media_queue::items_prompt("Generate narration for these items", items_json(items));
     let turns = collect::START_BASE_TURNS + TURNS_PER_ITEM * items.len() as u32;
-    let reply = claude::run_connector(cwd, MEDIA_MODEL, GENERATE_SYSTEM, &prompt, CONNECTOR_TOOLS, turns)?;
+    let reply = claude::run_connector(
+        cwd,
+        MEDIA_MODEL,
+        GENERATE_SYSTEM,
+        &prompt,
+        CONNECTOR_TOOLS,
+        turns,
+    )?;
     collect::parse_started(&reply.text)
 }
 
@@ -81,8 +104,15 @@ mod tests {
         let mut conn = Connection::open_in_memory().unwrap();
         db::init(&conn).unwrap();
         let story = db::create_story(&conn, "t", "body").unwrap();
-        db::replace_scenes(&mut conn, story.id, &[NewScene { text: "[softly] one".into(), image_prompt: "fox".into() }])
-            .unwrap();
+        db::replace_scenes(
+            &mut conn,
+            story.id,
+            &[NewScene {
+                text: "[softly] one".into(),
+                image_prompt: "fox".into(),
+            }],
+        )
+        .unwrap();
         media::request_asset(&conn, story.id, 0, KIND_AUDIO).unwrap();
 
         let items = queued_audio(&conn, story.id).unwrap();
@@ -95,6 +125,9 @@ mod tests {
     #[test]
     fn narration_model_matches_the_prompts() {
         assert!(claude::is_known_model(MEDIA_MODEL));
-        assert!(ESTIMATE_SYSTEM.contains(media::AUDIO_MODEL) && GENERATE_SYSTEM.contains(media::AUDIO_MODEL));
+        assert!(
+            ESTIMATE_SYSTEM.contains(media::AUDIO_MODEL)
+                && GENERATE_SYSTEM.contains(media::AUDIO_MODEL)
+        );
     }
 }

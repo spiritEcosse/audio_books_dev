@@ -59,7 +59,11 @@ pub struct Progress {
 }
 
 fn percent(done: f64, total: f64) -> f64 {
-    if total <= 0.0 { 100.0 } else { (done / total * 100.0).clamp(0.0, 100.0) }
+    if total <= 0.0 {
+        100.0
+    } else {
+        (done / total * 100.0).clamp(0.0, 100.0)
+    }
 }
 
 /// A `frame=N` line of ffmpeg's `-progress` output.
@@ -97,7 +101,11 @@ pub struct Plan {
 }
 
 pub fn plan(narration_secs: &[f64]) -> Plan {
-    let mut plan = Plan { clip_secs: Vec::new(), clip_starts: Vec::new(), voice_starts: Vec::new() };
+    let mut plan = Plan {
+        clip_secs: Vec::new(),
+        clip_starts: Vec::new(),
+        voice_starts: Vec::new(),
+    };
     let mut start = 0.0;
     for narration in narration_secs {
         let slot = LEAD_SECS + narration + TAIL_SECS;
@@ -147,7 +155,13 @@ pub fn motion_filter(motion: Motion, frames: u32, resolution: Resolution) -> Str
     )
 }
 
-fn clip_args(image: &Path, motion: Motion, secs: f64, resolution: Resolution, output: &Path) -> Vec<OsString> {
+fn clip_args(
+    image: &Path,
+    motion: Motion,
+    secs: f64,
+    resolution: Resolution,
+    output: &Path,
+) -> Vec<OsString> {
     vec![
         "-y".into(),
         "-v".into(),
@@ -173,7 +187,12 @@ fn clip_args(image: &Path, motion: Motion, secs: f64, resolution: Resolution, ou
 }
 
 /// Joins the clips with fades and mixes each narration in at its start time.
-pub fn assemble_args(clips: &[PathBuf], audios: &[PathBuf], plan: &Plan, output: &Path) -> Vec<OsString> {
+pub fn assemble_args(
+    clips: &[PathBuf],
+    audios: &[PathBuf],
+    plan: &Plan,
+    output: &Path,
+) -> Vec<OsString> {
     let count = clips.len();
     let mut args: Vec<OsString> = vec!["-y".into(), "-v".into(), "error".into()];
     for input in clips.iter().chain(audios) {
@@ -193,15 +212,47 @@ pub fn assemble_args(clips: &[PathBuf], audios: &[PathBuf], plan: &Plan, output:
     let delayed: Vec<String> = (0..count)
         .map(|index| {
             let millis = (plan.voice_starts[index] * 1000.0).round() as u64;
-            graph.push(format!("[{}:a]adelay={millis}:all=1[a{index}]", count + index));
+            graph.push(format!(
+                "[{}:a]adelay={millis}:all=1[a{index}]",
+                count + index
+            ));
             format!("[a{index}]")
         })
         .collect();
-    graph.push(format!("{}amix=inputs={count}:normalize=0:duration=longest[aout]", delayed.concat()));
-    args.extend(["-filter_complex".into(), graph.join(";").into(), "-map".into()]);
-    args.push(if count == 1 { video } else { format!("[{video}]") }.into());
+    graph.push(format!(
+        "{}amix=inputs={count}:normalize=0:duration=longest[aout]",
+        delayed.concat()
+    ));
+    args.extend([
+        "-filter_complex".into(),
+        graph.join(";").into(),
+        "-map".into(),
+    ]);
+    args.push(
+        if count == 1 {
+            video
+        } else {
+            format!("[{video}]")
+        }
+        .into(),
+    );
     args.extend(["-map".into(), "[aout]".into()]);
-    for part in ["-c:v", "libx264", "-preset", "medium", "-crf", CRF, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", AUDIO_BITRATE, "-movflags", "+faststart"] {
+    for part in [
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        CRF,
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        AUDIO_BITRATE,
+        "-movflags",
+        "+faststart",
+    ] {
         args.push(part.into());
     }
     args.push(output.into());
@@ -240,19 +291,41 @@ pub fn existing_videos(media_dir: &Path) -> Vec<VideoFile> {
         .into_iter()
         .filter_map(|resolution| {
             let path = video_path(media_dir, resolution);
-            path.is_file().then(|| VideoFile { label: resolution.label(), file_path: path.display().to_string() })
+            path.is_file().then(|| VideoFile {
+                label: resolution.label(),
+                file_path: path.display().to_string(),
+            })
         })
         .collect()
 }
 
-fn clip_cache_path(dir: &Path, scene: &SceneSource, motion: Motion, secs: f64, resolution: Resolution) -> PathBuf {
+fn clip_cache_path(
+    dir: &Path,
+    scene: &SceneSource,
+    motion: Motion,
+    secs: f64,
+    resolution: Resolution,
+) -> PathBuf {
     let stamp = std::fs::metadata(&scene.image)
         .ok()
         .map(|meta| (meta.len(), meta.modified().ok()))
         .unwrap_or_default();
     let mut hasher = DefaultHasher::new();
-    (&scene.image, stamp, motion, frame_count(secs), resolution.label(), CLIP_PRESET, CLIP_CRF).hash(&mut hasher);
-    dir.join(format!("clip-{}-{:016x}.mp4", scene.position, hasher.finish()))
+    (
+        &scene.image,
+        stamp,
+        motion,
+        frame_count(secs),
+        resolution.label(),
+        CLIP_PRESET,
+        CLIP_CRF,
+    )
+        .hash(&mut hasher);
+    dir.join(format!(
+        "clip-{}-{:016x}.mp4",
+        scene.position,
+        hasher.finish()
+    ))
 }
 
 fn run_tool(program: &Path, args: &[OsString], name: &str) -> Result<String, AppError> {
@@ -264,18 +337,39 @@ fn run_tool(program: &Path, args: &[OsString], name: &str) -> Result<String, App
         return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
     }
     let log = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    let tail: String = log.chars().rev().take(ERROR_TAIL_CHARS).collect::<Vec<_>>().into_iter().rev().collect();
-    Err(AppError::new(format!("{name} failed ({}): {tail}", output.status)))
+    let tail: String = log
+        .chars()
+        .rev()
+        .take(ERROR_TAIL_CHARS)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    Err(AppError::new(format!(
+        "{name} failed ({}): {tail}",
+        output.status
+    )))
 }
 
 fn find_tool(name: &str) -> Result<PathBuf, AppError> {
-    claude::find_in_login_shell(name)?
-        .ok_or_else(|| AppError::new(format!("{name} not found. Install ffmpeg, e.g. brew install ffmpeg")))
+    claude::find_in_login_shell(name)?.ok_or_else(|| {
+        AppError::new(format!(
+            "{name} not found. Install ffmpeg, e.g. brew install ffmpeg"
+        ))
+    })
 }
 
 fn narration_seconds(ffprobe: &Path, audio: &Path) -> Result<f64, AppError> {
-    let args: Vec<OsString> =
-        ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"].map(OsString::from).into();
+    let args: Vec<OsString> = [
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "csv=p=0",
+    ]
+    .map(OsString::from)
+    .into();
     let mut args = args;
     args.push(audio.into());
     let text = run_tool(ffprobe, &args, "ffprobe")?;
@@ -327,12 +421,22 @@ fn run_ffmpeg(
             }
         }
     }
-    let status = child.wait().map_err(|e| AppError::new(format!("ffmpeg stopped: {e}")))?;
+    let status = child
+        .wait()
+        .map_err(|e| AppError::new(format!("ffmpeg stopped: {e}")))?;
     if status.success() {
         return Ok(());
     }
     let log = log.join().unwrap_or_default();
-    let tail: String = log.trim().chars().rev().take(ERROR_TAIL_CHARS).collect::<Vec<_>>().into_iter().rev().collect();
+    let tail: String = log
+        .trim()
+        .chars()
+        .rev()
+        .take(ERROR_TAIL_CHARS)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     Err(AppError::new(format!("ffmpeg failed ({status}): {tail}")))
 }
 
@@ -348,7 +452,8 @@ fn render_atomically(
     part.push(".part.mp4");
     let part = PathBuf::from(part);
     let result = run_ffmpeg(ffmpeg, &build(&part), cancel, on_frame).and_then(|()| {
-        std::fs::rename(&part, target).map_err(|e| AppError::new(format!("cannot save {}: {e}", target.display())))
+        std::fs::rename(&part, target)
+            .map_err(|e| AppError::new(format!("cannot save {}: {e}", target.display())))
     });
     if result.is_err() {
         let _ = std::fs::remove_file(&part);
@@ -371,25 +476,47 @@ pub fn export(
     }
     let ffmpeg = find_tool("ffmpeg")?;
     let ffprobe = find_tool("ffprobe")?;
-    let narration: Vec<f64> =
-        scenes.iter().map(|scene| narration_seconds(&ffprobe, &scene.audio)).collect::<Result<_, _>>()?;
+    let narration: Vec<f64> = scenes
+        .iter()
+        .map(|scene| narration_seconds(&ffprobe, &scene.audio))
+        .collect::<Result<_, _>>()?;
     let plan = plan(&narration);
     let clip_dir = media_dir.join(CLIP_DIR);
-    std::fs::create_dir_all(&clip_dir).map_err(|e| AppError::new(format!("cannot create {}: {e}", clip_dir.display())))?;
+    std::fs::create_dir_all(&clip_dir)
+        .map_err(|e| AppError::new(format!("cannot create {}: {e}", clip_dir.display())))?;
 
     let clips: Vec<PathBuf> = scenes
         .iter()
         .enumerate()
-        .map(|(index, scene)| clip_cache_path(&clip_dir, scene, motion_for(scene.position), plan.clip_secs[index], resolution))
+        .map(|(index, scene)| {
+            clip_cache_path(
+                &clip_dir,
+                scene,
+                motion_for(scene.position),
+                plan.clip_secs[index],
+                resolution,
+            )
+        })
         .collect();
-    let to_render: Vec<usize> = (0..scenes.len()).filter(|index| !clips[*index].is_file()).collect();
+    let to_render: Vec<usize> = (0..scenes.len())
+        .filter(|index| !clips[*index].is_file())
+        .collect();
     let clip_frames = |index: usize| f64::from(frame_count(plan.clip_secs[index]));
     let last = scenes.len() - 1;
     let join_frames = f64::from(frame_count(plan.clip_starts[last] + plan.clip_secs[last]));
-    let total = to_render.iter().map(|index| clip_frames(*index)).sum::<f64>() + join_frames * ASSEMBLY_WEIGHT;
+    let total = to_render
+        .iter()
+        .map(|index| clip_frames(*index))
+        .sum::<f64>()
+        + join_frames * ASSEMBLY_WEIGHT;
     let scene_count = scenes.len();
     let mut report = |stage: &'static str, scene: usize, done: f64| {
-        on_progress(Progress { percent: percent(done, total), stage, scene, scenes: scene_count });
+        on_progress(Progress {
+            percent: percent(done, total),
+            stage,
+            scene,
+            scenes: scene_count,
+        });
     };
 
     let mut done = 0.0;
@@ -425,11 +552,14 @@ mod tests {
     use super::*;
 
     fn text(args: &[OsString]) -> Vec<String> {
-        args.iter().map(|a| a.to_string_lossy().into_owned()).collect()
+        args.iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
     }
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("audiobooks-video-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("audiobooks-video-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -446,18 +576,32 @@ mod tests {
     #[test]
     fn motions_cycle_through_four_by_scene_position() {
         let motions: Vec<Motion> = (0..5).map(motion_for).collect();
-        assert_eq!(motions, [Motion::ZoomIn, Motion::PanRight, Motion::ZoomOut, Motion::PanLeft, Motion::ZoomIn]);
+        assert_eq!(
+            motions,
+            [
+                Motion::ZoomIn,
+                Motion::PanRight,
+                Motion::ZoomOut,
+                Motion::PanLeft,
+                Motion::ZoomIn
+            ]
+        );
         assert_eq!(motion_for(-1), Motion::PanLeft);
     }
 
     #[test]
     fn motion_filter_uses_fractional_perspective_and_the_exact_output_size() {
         let filter = motion_filter(Motion::ZoomIn, 300, Resolution::Hd);
-        assert!(filter.starts_with("scale=2560:1440:flags=lanczos,loop=loop=-1:size=1:start=0,fps=30,perspective="));
+        assert!(filter.starts_with(
+            "scale=2560:1440:flags=lanczos,loop=loop=-1:size=1:start=0,fps=30,perspective="
+        ));
         assert!(filter.contains("on/299"));
         assert!(filter.contains("eval=frame"));
         assert!(filter.ends_with("scale=1920:1080:flags=lanczos,format=yuv420p"));
-        assert!(motion_filter(Motion::PanLeft, 90, Resolution::Uhd).ends_with("scale=3840:2160:flags=lanczos,format=yuv420p"));
+        assert!(
+            motion_filter(Motion::PanLeft, 90, Resolution::Uhd)
+                .ends_with("scale=3840:2160:flags=lanczos,format=yuv420p")
+        );
     }
 
     #[test]
@@ -471,31 +615,59 @@ mod tests {
 
     #[test]
     fn clip_args_cap_the_length_and_end_with_the_output() {
-        let args = text(&clip_args(Path::new("a.png"), Motion::ZoomIn, 12.0, Resolution::Hd, Path::new("c.mp4")));
+        let args = text(&clip_args(
+            Path::new("a.png"),
+            Motion::ZoomIn,
+            12.0,
+            Resolution::Hd,
+            Path::new("c.mp4"),
+        ));
         assert_eq!(&args[3..7], ["-i", "a.png", "-t", "12.000"]);
         assert_eq!(args.last().unwrap(), "c.mp4");
         let encoder = args.iter().position(|a| a == "-preset").unwrap();
-        assert_eq!(&args[encoder..encoder + 4], ["-preset", "veryfast", "-crf", "16"]);
+        assert_eq!(
+            &args[encoder..encoder + 4],
+            ["-preset", "veryfast", "-crf", "16"]
+        );
     }
 
     #[test]
     fn assemble_chains_fades_at_each_scene_start_and_delays_each_voice() {
         let clips: Vec<PathBuf> = ["c0.mp4", "c1.mp4", "c2.mp4"].map(PathBuf::from).into();
         let audios: Vec<PathBuf> = ["a0.mp3", "a1.mp3", "a2.mp3"].map(PathBuf::from).into();
-        let args = text(&assemble_args(&clips, &audios, &plan(&[10.0, 20.0, 5.0]), Path::new("out.mp4")));
+        let args = text(&assemble_args(
+            &clips,
+            &audios,
+            &plan(&[10.0, 20.0, 5.0]),
+            Path::new("out.mp4"),
+        ));
         let graph = &args[args.iter().position(|a| a == "-filter_complex").unwrap() + 1];
-        assert!(graph.contains("[0:v][1:v]xfade=transition=fade:duration=1:offset=11.000[x1]"), "{graph}");
-        assert!(graph.contains("[x1][2:v]xfade=transition=fade:duration=1:offset=32.000[x2]"), "{graph}");
+        assert!(
+            graph.contains("[0:v][1:v]xfade=transition=fade:duration=1:offset=11.000[x1]"),
+            "{graph}"
+        );
+        assert!(
+            graph.contains("[x1][2:v]xfade=transition=fade:duration=1:offset=32.000[x2]"),
+            "{graph}"
+        );
         assert!(graph.contains("[3:a]adelay=500:all=1[a0]"), "{graph}");
         assert!(graph.contains("[5:a]adelay=32500:all=1[a2]"), "{graph}");
-        assert!(graph.ends_with("[a0][a1][a2]amix=inputs=3:normalize=0:duration=longest[aout]"), "{graph}");
+        assert!(
+            graph.ends_with("[a0][a1][a2]amix=inputs=3:normalize=0:duration=longest[aout]"),
+            "{graph}"
+        );
         assert!(args.contains(&"[x2]".to_owned()));
         assert_eq!(args.last().unwrap(), "out.mp4");
     }
 
     #[test]
     fn a_single_scene_skips_the_fade_chain() {
-        let args = text(&assemble_args(&[PathBuf::from("c.mp4")], &[PathBuf::from("a.mp3")], &plan(&[4.0]), Path::new("o.mp4")));
+        let args = text(&assemble_args(
+            &[PathBuf::from("c.mp4")],
+            &[PathBuf::from("a.mp3")],
+            &plan(&[4.0]),
+            Path::new("o.mp4"),
+        ));
         let graph = &args[args.iter().position(|a| a == "-filter_complex").unwrap() + 1];
         assert!(!graph.contains("xfade"));
         assert!(args.contains(&"0:v".to_owned()));
@@ -507,9 +679,15 @@ mod tests {
         let original = dir.join("scene-0-image-v1.webp");
         assert_eq!(best_image(&original), original);
         std::fs::write(upscale::upscaled_path(&original, Resolution::Hd), b"x").unwrap();
-        assert_eq!(best_image(&original), upscale::upscaled_path(&original, Resolution::Hd));
+        assert_eq!(
+            best_image(&original),
+            upscale::upscaled_path(&original, Resolution::Hd)
+        );
         std::fs::write(upscale::upscaled_path(&original, Resolution::Uhd), b"x").unwrap();
-        assert_eq!(best_image(&original), upscale::upscaled_path(&original, Resolution::Uhd));
+        assert_eq!(
+            best_image(&original),
+            upscale::upscaled_path(&original, Resolution::Uhd)
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -529,11 +707,24 @@ mod tests {
         let dir = temp_dir("cache");
         let image = dir.join("scene.png");
         std::fs::write(&image, b"abc").unwrap();
-        let scene = SceneSource { position: 2, image, audio: dir.join("a.mp3") };
+        let scene = SceneSource {
+            position: 2,
+            image,
+            audio: dir.join("a.mp3"),
+        };
         let base = clip_cache_path(&dir, &scene, Motion::ZoomOut, 12.0, Resolution::Hd);
-        assert_eq!(base, clip_cache_path(&dir, &scene, Motion::ZoomOut, 12.0, Resolution::Hd));
-        assert_ne!(base, clip_cache_path(&dir, &scene, Motion::ZoomOut, 13.0, Resolution::Hd));
-        assert_ne!(base, clip_cache_path(&dir, &scene, Motion::ZoomOut, 12.0, Resolution::Uhd));
+        assert_eq!(
+            base,
+            clip_cache_path(&dir, &scene, Motion::ZoomOut, 12.0, Resolution::Hd)
+        );
+        assert_ne!(
+            base,
+            clip_cache_path(&dir, &scene, Motion::ZoomOut, 13.0, Resolution::Hd)
+        );
+        assert_ne!(
+            base,
+            clip_cache_path(&dir, &scene, Motion::ZoomOut, 12.0, Resolution::Uhd)
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -557,7 +748,14 @@ mod tests {
 
     #[test]
     fn export_rejects_an_empty_story() {
-        let err = export(&[], Resolution::Hd, Path::new("/tmp"), &AtomicBool::new(false), &mut |_| {}).unwrap_err();
+        let err = export(
+            &[],
+            Resolution::Hd,
+            Path::new("/tmp"),
+            &AtomicBool::new(false),
+            &mut |_| {},
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("no scenes"));
     }
 
@@ -590,7 +788,10 @@ mod tests {
         );
 
         assert!(was_cancelled(&result.unwrap_err()));
-        assert!(started.elapsed().as_secs() < 10, "the fake render takes 20 s if it is not killed");
+        assert!(
+            started.elapsed().as_secs() < 10,
+            "the fake render takes 20 s if it is not killed"
+        );
         assert!(!target.exists());
         assert!(!dir.join("out.mp4.part.mp4").exists());
         std::fs::remove_dir_all(dir).unwrap();
@@ -599,13 +800,16 @@ mod tests {
     #[test]
     fn a_cancel_set_before_the_start_stops_without_running_ffmpeg() {
         let cancel = AtomicBool::new(true);
-        let error = run_ffmpeg(Path::new("/definitely/not/ffmpeg"), &[], &cancel, |_| {}).unwrap_err();
+        let error =
+            run_ffmpeg(Path::new("/definitely/not/ffmpeg"), &[], &cancel, |_| {}).unwrap_err();
         assert!(was_cancelled(&error), "{error}");
     }
 
     #[test]
     fn other_errors_are_not_mistaken_for_a_cancel() {
-        assert!(!was_cancelled(&AppError::new("ffmpeg failed (exit status: 1)")));
+        assert!(!was_cancelled(&AppError::new(
+            "ffmpeg failed (exit status: 1)"
+        )));
     }
 
     /// Needs ffmpeg and ffprobe: `cargo test -- --ignored`.
@@ -621,28 +825,57 @@ mod tests {
             let audio = dir.join(format!("scene-{position}.mp3"));
             for (input, output) in [
                 (format!("testsrc=size=640x360:rate=1"), &image),
-                (format!("sine=frequency={}:duration={seconds}", 300 + position * 200), &audio),
+                (
+                    format!("sine=frequency={}:duration={seconds}", 300 + position * 200),
+                    &audio,
+                ),
             ] {
-                let mut args: Vec<OsString> = ["-y", "-v", "error", "-f", "lavfi", "-i", &input].map(OsString::from).into();
+                let mut args: Vec<OsString> = ["-y", "-v", "error", "-f", "lavfi", "-i", &input]
+                    .map(OsString::from)
+                    .into();
                 if output.extension().is_some_and(|ext| ext == "png") {
                     args.extend(["-frames:v".into(), "1".into()]);
                 }
                 args.push(output.into());
                 run_tool(&ffmpeg, &args, "ffmpeg").unwrap();
             }
-            scenes.push(SceneSource { position, image, audio });
+            scenes.push(SceneSource {
+                position,
+                image,
+                audio,
+            });
         }
         let mut reports: Vec<Progress> = Vec::new();
-        let video = export(&scenes, Resolution::Hd, &dir, &AtomicBool::new(false), &mut |progress| reports.push(progress)).unwrap();
+        let video = export(
+            &scenes,
+            Resolution::Hd,
+            &dir,
+            &AtomicBool::new(false),
+            &mut |progress| reports.push(progress),
+        )
+        .unwrap();
         assert!(reports.len() > 3, "{reports:?}");
-        assert!(reports.windows(2).all(|pair| pair[1].percent >= pair[0].percent), "{reports:?}");
+        assert!(
+            reports
+                .windows(2)
+                .all(|pair| pair[1].percent >= pair[0].percent),
+            "{reports:?}"
+        );
         assert_eq!(reports.last().unwrap().percent, 100.0);
         assert!(reports.iter().any(|p| p.stage == "clip" && p.scene == 2));
         assert_eq!(reports.last().unwrap().stage, "join");
-        let probe: Vec<OsString> =
-            ["-v", "error", "-show_entries", "stream=codec_type,width,height", "-show_entries", "format=duration", "-of", "csv=p=0"]
-                .map(OsString::from)
-                .into();
+        let probe: Vec<OsString> = [
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,width,height",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+        ]
+        .map(OsString::from)
+        .into();
         let mut args = probe;
         args.push((&video).into());
         let info = run_tool(&ffprobe, &args, "ffprobe").unwrap();

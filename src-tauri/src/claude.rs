@@ -31,9 +31,18 @@ pub struct ModelOption {
 
 /// Models the user can pick. Only these ids ever reach the CLI's `--model` flag.
 pub const MODELS: [ModelOption; 3] = [
-    ModelOption { id: "claude-sonnet-5-5", label: "Sonnet 5.5 (баланс)" },
-    ModelOption { id: "claude-opus-5-5", label: "Opus 5.5 (самая сильная)" },
-    ModelOption { id: "claude-haiku-5-5", label: "Haiku 5.5 (быстрая и дешёвая)" },
+    ModelOption {
+        id: "claude-sonnet-5-5",
+        label: "Sonnet 5.5 (баланс)",
+    },
+    ModelOption {
+        id: "claude-opus-5-5",
+        label: "Opus 5.5 (самая сильная)",
+    },
+    ModelOption {
+        id: "claude-haiku-5-5",
+        label: "Haiku 5.5 (быстрая и дешёвая)",
+    },
 ];
 
 pub const DEFAULT_MODEL: &str = MODELS[0].id;
@@ -119,15 +128,25 @@ fn exec(mut command: Command, cwd: &Path, prompt: &str) -> Result<CliReply, AppE
             String::from_utf8_lossy(&output.stdout).trim(),
             String::from_utf8_lossy(&output.stderr).trim()
         );
-        return Err(AppError::new(format!("claude exited with {}: {}", output.status, details.trim())));
+        return Err(AppError::new(format!(
+            "claude exited with {}: {}",
+            output.status,
+            details.trim()
+        )));
     }
     parse_cli_output(&output.stdout)
 }
 
 /// A headless turn that may call claude.ai connector tools. User settings (hooks, plugins) stay off.
 /// Do not add `--tools`: combined with `--setting-sources` it stops connector tools from loading.
-const CONNECTOR_ARGS: [&str; 6] =
-    ["-p", "--output-format", "json", "--setting-sources", "", "--disable-slash-commands"];
+const CONNECTOR_ARGS: [&str; 6] = [
+    "-p",
+    "--output-format",
+    "json",
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
+];
 
 /// Runs one headless turn that may use the connector tools matching `allowed_tools`
 /// (e.g. `mcp__claude_ai_ElevenLabs`); everything else stays unapproved and is denied. Blocking.
@@ -194,7 +213,13 @@ mod tests {
     #[test]
     fn surfaces_cli_error_flag() {
         let out = br#"{"is_error":true,"result":"Not logged in"}"#;
-        assert!(parse_cli_output(out).err().unwrap().to_string().contains("Not logged in"));
+        assert!(
+            parse_cli_output(out)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("Not logged in")
+        );
     }
 
     #[test]
@@ -205,9 +230,12 @@ mod tests {
 
     #[test]
     fn detects_missing_session_error() {
-        let missing = AppError::new("claude exited with 1: No conversation found with session ID: x");
+        let missing =
+            AppError::new("claude exited with 1: No conversation found with session ID: x");
         assert!(is_session_missing(&missing));
-        assert!(!is_session_missing(&AppError::new("claude exited with 1: network unreachable")));
+        assert!(!is_session_missing(&AppError::new(
+            "claude exited with 1: network unreachable"
+        )));
     }
 
     #[test]
