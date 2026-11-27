@@ -3,7 +3,8 @@
 //! scene only re-renders that scene; a final ffmpeg run joins the clips and mixes the audio.
 //!
 //! Timing: a scene's slot is LEAD + narration + TAIL seconds; its clip is TRANSITION longer so it overlaps the
-//! next clip during the fade. The result is `video-1080p.mp4` / `video-4k.mp4` in the story's media folder.
+//! next clip during the fade. The result is `video-1080p.mp4` / `video-4k.mp4` in the story's media folder, with
+//! English subtitles beside it in an `.srt` file of the same name (see `subtitles`).
 
 use std::collections::hash_map::DefaultHasher;
 use std::ffi::OsString;
@@ -18,6 +19,7 @@ use serde::Serialize;
 use crate::claude;
 use crate::error::AppError;
 use crate::loudness::{self, Measurement};
+use crate::subtitles;
 use crate::upscale::{self, Resolution};
 
 /// The message of the error a cancelled export ends with; see `was_cancelled`.
@@ -278,6 +280,8 @@ pub struct SceneSource {
     pub position: i64,
     pub image: PathBuf,
     pub audio: PathBuf,
+    /// The text the narration was generated from; `None` when that is no longer known.
+    pub narration: Option<String>,
 }
 
 /// A finished video next to the scene media.
@@ -289,6 +293,42 @@ pub struct VideoFile {
 
 pub fn video_path(media_dir: &Path, resolution: Resolution) -> PathBuf {
     media_dir.join(format!("video-{}.mp4", resolution.label()))
+}
+
+pub fn subtitles_path(video: &Path) -> PathBuf {
+    video.with_extension("srt")
+}
+
+/// Writes the subtitles of a finished video. When a scene's voiced text is unknown no file is written, and one left
+/// by an earlier export is removed: wrong or stale subtitles are worse than none.
+fn write_subtitles(
+    video: &Path,
+    scenes: &[SceneSource],
+    narration_secs: &[f64],
+    plan: &Plan,
+) -> Result<(), AppError> {
+    let path = subtitles_path(video);
+    let narrations: Option<Vec<subtitles::Narration>> = scenes
+        .iter()
+        .zip(narration_secs)
+        .zip(&plan.voice_starts)
+        .map(|((scene, &secs), &start)| {
+            let text = scene.narration.as_deref()?;
+            Some(subtitles::Narration { text, start, secs })
+        })
+        .collect();
+    let content = narrations
+        .map(|all| subtitles::srt(&all))
+        .unwrap_or_default();
+    let written = if content.is_empty() {
+        match std::fs::remove_file(&path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
+    } else {
+        std::fs::write(&path, content)
+    };
+    written.map_err(|e| AppError::new(format!("cannot save {}: {e}", path.display())))
 }
 
 pub fn existing_videos(media_dir: &Path) -> Vec<VideoFile> {
@@ -548,6 +588,7 @@ pub fn export(
         cancel,
         |frame| report("join", scene_count, done + frame as f64 * ASSEMBLY_WEIGHT),
     )?;
+    write_subtitles(&target, scenes, &narration, &plan)?;
     report("join", scene_count, total);
     Ok(target)
 }
@@ -727,6 +768,7 @@ mod tests {
             position: 2,
             image,
             audio: dir.join("a.mp3"),
+            narration: None,
         };
         let base = clip_cache_path(&dir, &scene, Motion::ZoomOut, 12.0, Resolution::Hd);
         assert_eq!(
@@ -760,6 +802,31 @@ mod tests {
         assert_eq!(parse_frame("fps=29.97"), None);
         assert_eq!(parse_frame("frame=N/A"), None);
         assert_eq!(parse_frame("progress=continue"), None);
+    }
+
+    #[test]
+    fn subtitles_follow_the_voice_starts_and_are_removed_when_a_voiced_text_is_unknown() {
+        let dir = temp_dir("srt");
+        let video = video_path(&dir, Resolution::Uhd);
+        let scene = |position: i64, narration: Option<&str>| SceneSource {
+            position,
+            image: dir.join("i.png"),
+            audio: dir.join("a.mp3"),
+            narration: narration.map(str::to_owned),
+        };
+        let secs = [2.0, 3.0];
+        let known = [scene(0, Some("One.")), scene(1, Some("Two."))];
+
+        write_subtitles(&video, &known, &secs, &plan(&secs)).unwrap();
+        let srt = std::fs::read_to_string(dir.join("video-4k.srt")).unwrap();
+        assert!(srt.contains("00:00:00,500 --> 00:00:02,500\nOne."), "{srt}");
+        assert!(srt.contains("00:00:03,500 --> 00:00:06,500\nTwo."), "{srt}");
+
+        let unknown = [scene(0, Some("One.")), scene(1, None)];
+        write_subtitles(&video, &unknown, &secs, &plan(&secs)).unwrap();
+        assert!(!subtitles_path(&video).exists());
+        write_subtitles(&video, &unknown, &secs, &plan(&secs)).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -920,6 +987,7 @@ mod tests {
                 position,
                 image,
                 audio,
+                narration: Some(format!("[softly] Scene {position}.")),
             });
         }
         let mut reports: Vec<Progress> = Vec::new();
@@ -968,6 +1036,12 @@ mod tests {
         let duration: f64 = info.lines().last().unwrap().trim().parse().unwrap();
         assert!((duration - 8.0).abs() < 0.5, "{duration}");
         assert!(video_path(&dir, Resolution::Hd).is_file());
+        let srt = std::fs::read_to_string(subtitles_path(&video)).unwrap();
+        assert!(
+            srt.contains("Scene 0.") && srt.contains("Scene 1."),
+            "{srt}"
+        );
+        assert!(!srt.contains("softly"), "{srt}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

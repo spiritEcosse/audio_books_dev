@@ -12,6 +12,7 @@ mod media;
 mod media_queue;
 mod profiles;
 mod stats;
+mod subtitles;
 mod upscale;
 mod video;
 
@@ -715,6 +716,7 @@ fn export_sources(conn: &Connection, story_id: i64) -> Result<Vec<video::SceneSo
             .and_then(|a| a.file_path.as_ref())
             .map(PathBuf::from)
     };
+    let mut voiced = media::voiced_texts(conn, story_id)?;
     let mut sources = Vec::new();
     let mut missing = Vec::new();
     for scene in db::list_scenes(conn, story_id)? {
@@ -726,6 +728,7 @@ fn export_sources(conn: &Connection, story_id: i64) -> Result<Vec<video::SceneSo
                 position: scene.position,
                 image,
                 audio,
+                narration: voiced.remove(&scene.position),
             }),
             _ => missing.push(scene.position.to_string()),
         }
