@@ -18,6 +18,9 @@ pub const SCOPE: &str = "https://www.googleapis.com/auth/youtube.force-ssl";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(100);
 const MAX_REQUEST_LINE: u64 = 8 * 1024;
+/// Google's token address now and then answers 500 for a moment.
+const TOKEN_ATTEMPTS: u32 = 3;
+const TOKEN_RETRY_PAUSE: Duration = Duration::from_millis(500);
 
 /// The "Desktop app" OAuth client the user downloaded from Google Cloud. Deliberately not `Debug`.
 #[derive(Deserialize)]
@@ -187,7 +190,8 @@ pub fn http() -> ureq::Agent {
         .into()
 }
 
-/// A form post to the token address. `Err` carries Google's error code, if it sent one.
+/// A form post to the token address, repeated while Google answers with a server error. `Err` carries Google's
+/// error code, if it sent one.
 fn token_request(
     client: &Client,
     form: &[(&str, &str)],
@@ -197,12 +201,23 @@ fn token_request(
         ("client_id", client.client_id.as_str()),
         ("client_secret", client.client_secret.as_str()),
     ];
-    let mut response = http()
-        .post(&client.token_uri)
-        .send_form(credentials.iter().chain(form).copied())
-        .map_err(failed)?;
-    let status = response.status();
-    let body = response.body_mut().read_to_string().map_err(failed)?;
+    let mut attempt = 1;
+    let (status, body) = loop {
+        let mut response = http()
+            .post(&client.token_uri)
+            .send_form(credentials.iter().chain(form).copied())
+            .map_err(failed)?;
+        let status = response.status();
+        if status.is_server_error() && attempt < TOKEN_ATTEMPTS {
+            std::thread::sleep(TOKEN_RETRY_PAUSE * attempt);
+            attempt += 1;
+            continue;
+        }
+        break (
+            status,
+            response.body_mut().read_to_string().map_err(failed)?,
+        );
+    };
     let reply: TokenReply = serde_json::from_str(&body).unwrap_or_default();
     if status.is_success() {
         return Ok(reply);
@@ -287,6 +302,7 @@ pub fn sign_in(
 
 #[cfg(test)]
 mod tests {
+    use super::super::fake::Server;
     use super::*;
 
     fn client(token_uri: &str) -> Client {
@@ -460,8 +476,24 @@ mod tests {
         let (address, _server) = token_server("400 Bad Request", r#"{"error":"invalid_grant"}"#);
         let outcome = refresh(&client(&address), "r").unwrap();
         assert!(matches!(outcome, Refreshed::Expired));
-        let (address, _server) = token_server("500 Oops", "{}");
-        assert!(refresh(&client(&address), "r").is_err());
+    }
+
+    #[test]
+    fn a_server_failure_of_google_is_retried_a_few_times() {
+        let failure = (
+            "500 Internal Server Error",
+            "",
+            r#"{"error":"internal_failure"}"#,
+        );
+        let server = Server::start(&[failure, ("200 OK", "", r#"{"access_token":"fresh"}"#)]);
+        let outcome = refresh(&client(&server.url), "r").unwrap();
+        assert!(matches!(outcome, Refreshed::Access(token) if token == "fresh"));
+        assert_eq!(server.requests()[0].body, server.requests()[1].body);
+
+        let server = Server::start(&[failure; TOKEN_ATTEMPTS as usize]);
+        let error = refresh(&client(&server.url), "r").err().unwrap();
+        assert!(error.to_string().contains("internal_failure"), "{error}");
+        assert_eq!(server.requests().len(), TOKEN_ATTEMPTS as usize);
     }
 
     #[test]
