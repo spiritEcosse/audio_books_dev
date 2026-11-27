@@ -33,6 +33,8 @@ pub struct Form {
     pub made_for_kids: Option<bool>,
     pub synthetic_media: Option<bool>,
     pub subtitles: bool,
+    /// The channel the video goes to.
+    pub channel_id: Option<String>,
 }
 
 impl Default for Form {
@@ -46,6 +48,7 @@ impl Default for Form {
             made_for_kids: None,
             synthetic_media: None,
             subtitles: true,
+            channel_id: None,
         }
     }
 }

@@ -1,44 +1,32 @@
-//! Tauri commands for the YouTube account.
+//! Tauri commands for a story's upload.
 
-use std::cell::RefCell;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
-use tauri_plugin_opener::OpenerExt;
 
+use super::accounts::api;
 use super::draft::{self, Draft};
 use super::form::Form;
 use super::job::{self, View};
-use super::upload::{self, Api};
-use super::{auth, keychain};
+use super::upload;
 use crate::error::AppError;
 use crate::upscale::Resolution;
 use crate::{AppState, claude, db, media, selected_model, video};
 
-/// Relative to the home folder.
-const CLIENT_FILE: &str = ".config/audio-books/youtube-client.json";
-const CONSENT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-const REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
-
-const API: &str = "https://www.googleapis.com";
 const PROGRESS_EVENT: &str = "youtube-progress";
-const RETRY_BACKOFF: Duration = Duration::from_secs(2);
-/// An access token lives for an hour.
-const ACCESS_TOKEN_AGE: Duration = Duration::from_secs(50 * 60);
 
 /// Work that runs one at a time and can be cancelled.
 #[derive(Default)]
-struct Slot {
+pub(super) struct Slot {
     running: Arc<AtomicBool>,
-    cancel: Arc<AtomicBool>,
+    pub(super) cancel: Arc<AtomicBool>,
 }
 
 /// Frees the slot when dropped.
-struct Taken(Arc<AtomicBool>);
+pub(super) struct Taken(Arc<AtomicBool>);
 
 impl Drop for Taken {
     fn drop(&mut self) {
@@ -47,7 +35,7 @@ impl Drop for Taken {
 }
 
 impl Slot {
-    fn take(&self, busy: &str) -> Result<(Taken, Arc<AtomicBool>), AppError> {
+    pub(super) fn take(&self, busy: &str) -> Result<(Taken, Arc<AtomicBool>), AppError> {
         if self.running.swap(true, Ordering::SeqCst) {
             return Err(AppError::new(busy));
         }
@@ -58,87 +46,23 @@ impl Slot {
 
 #[derive(Default)]
 pub struct YoutubeState {
-    sign_in: Slot,
-    upload: Slot,
-}
-
-pub(crate) fn client_file() -> Result<PathBuf, AppError> {
-    std::env::var_os("HOME")
-        .map(|home| PathBuf::from(home).join(CLIENT_FILE))
-        .ok_or_else(|| AppError::new("HOME is not set"))
-}
-
-#[tauri::command]
-pub fn youtube_connected() -> Result<bool, AppError> {
-    Ok(keychain::load(keychain::SERVICE)?.is_some())
-}
-
-#[tauri::command]
-pub async fn connect_youtube(
-    app: tauri::AppHandle,
-    youtube: State<'_, YoutubeState>,
-) -> Result<(), AppError> {
-    let client = auth::Client::load(&client_file()?)?;
-    let (_taken, cancel) = youtube
-        .sign_in
-        .take("a YouTube sign-in is already waiting for the browser")?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let open = |url: &str| {
-            app.opener()
-                .open_url(url, None::<&str>)
-                .map_err(|e| AppError::new(format!("cannot open the browser: {e}")))
-        };
-        let token = auth::sign_in(&client, open, &cancel, CONSENT_TIMEOUT)?;
-        keychain::save(keychain::SERVICE, &token)
-    })
-    .await
-    .map_err(|e| AppError::new(format!("YouTube sign-in stopped: {e}")))?
-}
-
-#[tauri::command]
-pub fn cancel_youtube_connect(youtube: State<'_, YoutubeState>) {
-    youtube.sign_in.cancel.store(true, Ordering::SeqCst);
-}
-
-/// The API with the saved sign-in; an expired one is forgotten so the UI offers to connect again.
-fn api() -> Result<Api, AppError> {
-    let client = auth::Client::load(&client_file()?)?;
-    let saved = keychain::load(keychain::SERVICE)?
-        .ok_or_else(|| AppError::new("connect the YouTube account first"))?;
-    let cached: RefCell<Option<(String, Instant)>> = RefCell::new(None);
-    let token = move || {
-        if let Some((token, at)) = cached.borrow().as_ref()
-            && at.elapsed() < ACCESS_TOKEN_AGE
-        {
-            return Ok(token.clone());
-        }
-        match auth::refresh(&client, &saved)? {
-            auth::Refreshed::Access(token) => {
-                *cached.borrow_mut() = Some((token.clone(), Instant::now()));
-                Ok(token)
-            }
-            auth::Refreshed::Expired => {
-                keychain::delete(keychain::SERVICE)?;
-                Err(AppError::new(
-                    "the YouTube sign-in has expired or was revoked: connect the account again",
-                ))
-            }
-        }
-    };
-    Ok(Api {
-        base: API.to_owned(),
-        token: Box::new(token),
-        backoff: RETRY_BACKOFF,
-    })
+    pub(super) sign_in: Slot,
+    pub(super) upload: Slot,
 }
 
 #[derive(Serialize)]
 pub struct YoutubeInfo {
-    connected: bool,
     uploading: bool,
     form: Form,
     videos: Vec<video::VideoFile>,
-    upload: Option<View>,
+    uploads: Vec<ChannelUpload>,
+}
+
+#[derive(Serialize)]
+pub struct ChannelUpload {
+    channel_id: String,
+    #[serde(flatten)]
+    view: View,
 }
 
 #[tauri::command]
@@ -147,7 +71,6 @@ pub fn get_youtube(
     youtube: State<'_, YoutubeState>,
     story_id: i64,
 ) -> Result<YoutubeInfo, AppError> {
-    let connected = youtube_connected()?;
     let conn = state.conn()?;
     let form = match job::load_form(&conn, story_id)? {
         Some(form) => form,
@@ -156,12 +79,18 @@ pub fn get_youtube(
             ..Form::default()
         },
     };
+    let uploads = job::load_records(&conn, story_id)?
+        .into_iter()
+        .map(|(channel_id, record)| ChannelUpload {
+            channel_id,
+            view: record.view(),
+        })
+        .collect();
     Ok(YoutubeInfo {
-        connected,
         uploading: youtube.upload.running.load(Ordering::SeqCst),
         form,
         videos: video::existing_videos(&media::story_media_dir(&state.workspace, story_id)),
-        upload: job::load_record(&conn, story_id)?.map(|record| record.view()),
+        uploads,
     })
 }
 
@@ -230,6 +159,10 @@ fn upload_story(
     let media_dir = media::story_media_dir(&state.workspace, story_id);
     let file = video::video_path(&media_dir, resolution);
     let metadata = form.metadata(unix_now()?)?;
+    let channel_id = form
+        .channel_id
+        .clone()
+        .ok_or_else(|| AppError::new("choose a channel"))?;
     let subtitles = form
         .subtitles
         .then(|| {
@@ -243,7 +176,13 @@ fn upload_story(
     let previous = {
         let conn = state.conn()?;
         job::save_form(&conn, story_id, &form)?;
-        job::load_record(&conn, story_id)?
+        // Without its channel the earlier upload cannot be seen, and the video could go up twice.
+        if job::has_unadopted(&conn, story_id)? {
+            return Err(AppError::new(
+                "this story's earlier upload is not carried over to its channel yet: see the settings",
+            ));
+        }
+        job::load_record(&conn, story_id, &channel_id)?
     };
     let request = job::Request {
         video: &file,
@@ -252,15 +191,18 @@ fn upload_story(
         subtitles,
         again,
     };
-    let mut save = |record: &job::Record| job::save_record(&*state.conn()?, story_id, record);
+    let mut save =
+        |record: &job::Record| job::save_record(&*state.conn()?, story_id, &channel_id, record);
     let mut progress = |sent: u64, size: u64| {
         let percent = sent as f64 * 100.0 / size.max(1) as f64;
         let _ = app.emit(PROGRESS_EVENT, ProgressEvent { story_id, percent });
     };
-    match job::run(&api()?, request, previous, cancel, &mut save, &mut progress) {
+    let api = api(&channel_id)?;
+    match job::run(&api, request, previous, cancel, &mut save, &mut progress) {
         Ok(record) => Ok(Some(record.view())),
         Err(error) if error.to_string() == upload::CANCELLED_MESSAGE => {
-            Ok(job::load_record(&*state.conn()?, story_id)?.map(|record| record.view()))
+            let saved = job::load_record(&*state.conn()?, story_id, &channel_id)?;
+            Ok(saved.map(|record| record.view()))
         }
         Err(error) => Err(error),
     }
@@ -296,40 +238,17 @@ pub async fn retry_youtube_captions(
     app: tauri::AppHandle,
     youtube: State<'_, YoutubeState>,
     story_id: i64,
+    channel_id: String,
 ) -> Result<View, AppError> {
     let (_taken, _) = youtube.upload.take("a video is being uploaded")?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let record = job::load_record(&*state.conn()?, story_id)?
-            .ok_or_else(|| AppError::new("this story has not been uploaded"))?;
-        let record = job::retry_captions(&api()?, record)?;
-        job::save_record(&*state.conn()?, story_id, &record)?;
+        let record = job::load_record(&*state.conn()?, story_id, &channel_id)?
+            .ok_or_else(|| AppError::new("this story has not been uploaded to this channel"))?;
+        let record = job::retry_captions(&api(&channel_id)?, record)?;
+        job::save_record(&*state.conn()?, story_id, &channel_id, &record)?;
         Ok(record.view())
     })
     .await
     .map_err(|e| AppError::new(format!("the subtitle upload stopped: {e}")))?
-}
-
-/// Forgets the token here first, then asks Google to revoke it.
-#[tauri::command]
-pub async fn disconnect_youtube() -> Result<(), AppError> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let Some(token) = keychain::load(keychain::SERVICE)? else {
-            return Ok(());
-        };
-        keychain::delete(keychain::SERVICE)?;
-        let manual = "disconnected here, but Google could not be told: remove the app at \
-                      myaccount.google.com/permissions";
-        let response = auth::http()
-            .post(REVOKE_URL)
-            .send_form([("token", token.as_str())])
-            .map_err(|e| AppError::new(format!("{manual} ({e})")))?;
-        // 400: the token had already expired or been revoked.
-        match response.status().as_u16() {
-            200 | 400 => Ok(()),
-            status => Err(AppError::new(format!("{manual} (HTTP {status})"))),
-        }
-    })
-    .await
-    .map_err(|e| AppError::new(format!("disconnecting stopped: {e}")))?
 }
