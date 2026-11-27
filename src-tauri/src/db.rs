@@ -83,11 +83,25 @@ CREATE TABLE IF NOT EXISTS scene_assets (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (story_id, position, kind)
 );
--- YouTube: the upload form and the last upload of a story, each as JSON (`youtube/job.rs`).
+-- YouTube: the upload form of a story as JSON (`youtube/job.rs`). `upload` held the only upload of older builds;
+-- it is moved to `youtube_uploads` once the channel is known.
 CREATE TABLE IF NOT EXISTS youtube (
     story_id INTEGER PRIMARY KEY REFERENCES stories(id) ON DELETE CASCADE,
     form     TEXT,
     upload   TEXT
+);
+-- No foreign key to the channels: the records outlive a disconnect.
+CREATE TABLE IF NOT EXISTS youtube_uploads (
+    story_id   INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    channel_id TEXT NOT NULL,
+    upload     TEXT NOT NULL,
+    PRIMARY KEY (story_id, channel_id)
+);
+-- Names and pictures only: the tokens are in the Keychain.
+CREATE TABLE IF NOT EXISTS youtube_channels (
+    id        TEXT PRIMARY KEY,
+    title     TEXT NOT NULL,
+    thumbnail TEXT
 );
 CREATE TABLE IF NOT EXISTS scene_references (
     story_id  INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,

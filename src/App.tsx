@@ -3,6 +3,7 @@ import { api, type MediaInfo, type ModelsInfo, type ProfilesInfo, type Story, ty
 import { Chat } from "./Chat";
 import { MediaPanel } from "./MediaPanel";
 import { YoutubePanel } from "./YoutubePanel";
+import { YoutubeSettings } from "./YoutubeSettings";
 import { type MediaBusy, type MediaChange } from "./mediaCost";
 import { Revisions } from "./Revisions";
 import { ModelPicker } from "./ModelPicker";
@@ -28,6 +29,9 @@ export default function App() {
   const [profiles, setProfiles] = useState<ProfilesInfo | null>(null);
   const [media, setMedia] = useState<MediaInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [inSettings, setInSettings] = useState(false);
+  const [settingsOpened, setSettingsOpened] = useState(false);
+  const [channelsKey, setChannelsKey] = useState(0);
   const [mediaOps, setMediaOps] = useState<readonly MediaBusy[]>([]);
 
   const run = useCallback(async (action: () => Promise<void>) => {
@@ -38,6 +42,15 @@ export default function App() {
       setError(errorMessage(err));
     }
   }, []);
+
+  const openSettings = () => {
+    setSettingsOpened(true);
+    setInSettings(true);
+  };
+  const showStory = (id: number) => {
+    setInSettings(false);
+    setSelectedId(id);
+  };
 
   const reloadStories = useCallback(
     () => run(async () => setStories(await api.listStories())),
@@ -104,7 +117,7 @@ export default function App() {
     run(async () => {
       const story = await api.createStory(title, text);
       await reloadStories();
-      setSelectedId(story.id);
+      showStory(story.id);
     });
 
   const remove = (id: number) =>
@@ -143,8 +156,8 @@ export default function App() {
         <h2>Истории</h2>
         <ul className="stories">
           {stories.map((story) => (
-            <li key={story.id} className={story.id === selectedId ? "active" : ""}>
-              <button className="link" onClick={() => setSelectedId(story.id)}>
+            <li key={story.id} className={!inSettings && story.id === selectedId ? "active" : ""}>
+              <button className="link" onClick={() => showStory(story.id)}>
                 {story.title}
               </button>
               <button className="danger" onClick={() => remove(story.id)} aria-label="Удалить">
@@ -154,6 +167,9 @@ export default function App() {
           ))}
         </ul>
         <StoryForm onCreate={create} />
+        <button type="button" className="open-settings" aria-pressed={inSettings} onClick={openSettings}>
+          Настройки
+        </button>
       </aside>
       <main>
         {mediaOps.map((op) => (
@@ -162,8 +178,12 @@ export default function App() {
           </p>
         ))}
         {error && <p className="error">{error}</p>}
+        {settingsOpened && (
+          <YoutubeSettings visible={inSettings} onChange={() => setChannelsKey((key) => key + 1)} />
+        )}
         {detail ? (
-          <div className="workspace">
+          // Hidden, not removed, so that the chat draft and running progress survive a visit to the settings.
+          <div className="workspace" hidden={inSettings}>
             <div className="scenes-pane">
               <h1>{detail.story.title}</h1>
               <StorySettingsPanel
@@ -197,6 +217,8 @@ export default function App() {
                   key={detail.story.id}
                   storyId={detail.story.id}
                   videosKey={media.videos.map((video) => video.file_path).join()}
+                  channelsKey={channelsKey}
+                  onOpenSettings={openSettings}
                 />
               )}
               <SceneList
@@ -218,7 +240,7 @@ export default function App() {
             />
           </div>
         ) : (
-          <p className="muted">Выберите или добавьте историю.</p>
+          !inSettings && <p className="muted">Выберите или добавьте историю.</p>
         )}
       </main>
     </div>

@@ -1,4 +1,4 @@
-import type { YoutubeForm } from "./api";
+import type { YoutubeChannel, YoutubeForm } from "./api";
 
 const MS = 1000;
 
@@ -26,7 +26,10 @@ export function toLocalInput(unix: number | null): string {
 }
 
 export interface UploadConditions {
-  readonly connected: boolean;
+  /** The channel the video would go to. */
+  readonly channel: YoutubeChannel | null;
+  /** Whether any channel is connected at all. */
+  readonly hasChannels: boolean;
   readonly hasVideo: boolean;
   readonly alreadyUploaded: boolean;
   readonly confirmedAgain: boolean;
@@ -34,10 +37,23 @@ export interface UploadConditions {
   readonly now: number;
 }
 
+/** The channel saved with the story; without a saved one, the only connected channel. */
+export function selectedChannel(
+  channels: readonly YoutubeChannel[],
+  savedId: string | null,
+): YoutubeChannel | null {
+  // A disconnected channel is not silently replaced: the video would go somewhere else.
+  if (savedId !== null) return channels.find((channel) => channel.id === savedId) ?? null;
+  const connected = channels.filter((channel) => channel.connected);
+  return connected.length === 1 ? connected[0] : null;
+}
+
 /** Why the upload button is off; empty when it can be pressed. The backend checks the YouTube limits. */
 export function blockers(form: YoutubeForm, conditions: UploadConditions): string[] {
   const checks: [boolean, string][] = [
-    [!conditions.connected, "подключите аккаунт YouTube"],
+    [!conditions.hasChannels, "подключите канал в настройках"],
+    [conditions.hasChannels && conditions.channel === null, "выберите канал"],
+    [conditions.channel?.connected === false, "переподключите канал в настройках"],
     [!conditions.hasVideo, "соберите видео"],
     [form.title.trim() === "", "введите название"],
     [form.made_for_kids === null, "укажите, для детей ли видео"],

@@ -114,6 +114,19 @@ fn video(mut response: Response<ureq::Body>) -> Result<Uploaded, AppError> {
     })
 }
 
+/// A read from the API; `path` starts with `/`.
+pub fn get(api: &Api, path: &str) -> Result<String, AppError> {
+    let mut response = agent()
+        .get(&format!("{}{path}", api.base))
+        .header("Authorization", &api.bearer()?)
+        .call()
+        .map_err(unreachable)?;
+    if !response.status().is_success() {
+        return Err(refusal(response));
+    }
+    response.body_mut().read_to_string().map_err(unreachable)
+}
+
 /// Opens an upload session and returns its address.
 pub fn start(api: &Api, metadata: &Value, size: u64) -> Result<String, AppError> {
     let url = format!(

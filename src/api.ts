@@ -181,6 +181,22 @@ export interface YoutubeForm {
   made_for_kids: boolean | null;
   synthetic_media: boolean | null;
   subtitles: boolean;
+  /** The channel the video goes to. */
+  channel_id: string | null;
+}
+
+export interface YoutubeChannel {
+  id: string;
+  title: string;
+  thumbnail: string | null;
+  /** False when the sign-in expired and the channel has to be reconnected. */
+  connected: boolean;
+}
+
+export interface YoutubeChannels {
+  channels: YoutubeChannel[];
+  /** Why the account of an older version could not be carried over yet. */
+  warning: string | null;
 }
 
 export interface YoutubeUpload {
@@ -194,12 +210,13 @@ export interface YoutubeUpload {
   already_uploaded: boolean;
 }
 
+export type YoutubeChannelUpload = YoutubeUpload & { channel_id: string };
+
 export interface YoutubeInfo {
-  connected: boolean;
   uploading: boolean;
   form: YoutubeForm;
   videos: VideoFile[];
-  upload: YoutubeUpload | null;
+  uploads: YoutubeChannelUpload[];
 }
 
 export type YoutubeDraft = Pick<YoutubeForm, "title" | "description" | "tags">;
@@ -211,17 +228,19 @@ export interface YoutubeProgress {
 
 export const api = {
   getYoutube: (storyId: number) => invoke<YoutubeInfo>("get_youtube", { storyId }),
-  connectYoutube: () => invoke<void>("connect_youtube"),
+  forgetLegacyYoutube: () => invoke<void>("forget_legacy_youtube"),
+  youtubeChannels: () => invoke<YoutubeChannels>("youtube_channels"),
+  connectYoutube: () => invoke<Omit<YoutubeChannel, "connected">>("connect_youtube"),
   cancelYoutubeConnect: () => invoke<void>("cancel_youtube_connect"),
-  disconnectYoutube: () => invoke<void>("disconnect_youtube"),
+  disconnectYoutube: (channelId: string) => invoke<void>("disconnect_youtube", { channelId }),
   saveYoutubeForm: (storyId: number, form: YoutubeForm) =>
     invoke<void>("save_youtube_form", { storyId, form }),
   draftYoutube: (storyId: number) => invoke<YoutubeDraft>("draft_youtube", { storyId }),
   uploadYoutube: (storyId: number, resolution: Resolution, form: YoutubeForm, again: boolean) =>
     invoke<YoutubeUpload | null>("upload_youtube", { storyId, resolution, form, again }),
   cancelYoutubeUpload: () => invoke<void>("cancel_youtube_upload"),
-  retryYoutubeCaptions: (storyId: number) =>
-    invoke<YoutubeUpload>("retry_youtube_captions", { storyId }),
+  retryYoutubeCaptions: (storyId: number, channelId: string) =>
+    invoke<YoutubeUpload>("retry_youtube_captions", { storyId, channelId }),
   listStories: () => invoke<Story[]>("list_stories"),
   createStory: (title: string, text: string) =>
     invoke<Story>("create_story", { title, text }),

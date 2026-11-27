@@ -1,4 +1,4 @@
-//! One story's upload from start to finish, kept in the `youtube` table so that it survives errors and restarts:
+//! One story's upload to one channel from start to finish, kept in the `youtube_uploads` table so that it survives errors and restarts:
 //! an unfinished session is resumed, a finished video is not sent again, failed subtitles can be retried alone.
 
 use std::collections::hash_map::DefaultHasher;
@@ -45,7 +45,7 @@ pub struct View {
     pub captions_error: Option<String>,
     /// An unfinished upload that the next attempt continues.
     pub unfinished: bool,
-    /// The story has a video on YouTube already, so another upload needs a confirmation.
+    /// The channel has a video of this story already, so another upload needs a confirmation.
     pub already_uploaded: bool,
 }
 
@@ -101,25 +101,80 @@ pub fn save_form(conn: &Connection, story_id: i64, form: &Form) -> Result<(), Ap
     Ok(())
 }
 
-pub fn load_record(conn: &Connection, story_id: i64) -> Result<Option<Record>, AppError> {
-    let json = load_column(
-        conn,
-        story_id,
-        "SELECT upload FROM youtube WHERE story_id = ?1",
-    )?;
-    json.map(|json| {
-        serde_json::from_str(&json)
-            .map_err(|e| AppError::new(format!("the saved upload is unreadable: {e}")))
-    })
+fn decode(json: &str) -> Result<Record, AppError> {
+    serde_json::from_str(json)
+        .map_err(|e| AppError::new(format!("the saved upload is unreadable: {e}")))
+}
+
+pub fn load_record(
+    conn: &Connection,
+    story_id: i64,
+    channel_id: &str,
+) -> Result<Option<Record>, AppError> {
+    conn.query_row(
+        "SELECT upload FROM youtube_uploads WHERE story_id = ?1 AND channel_id = ?2",
+        params![story_id, channel_id],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()?
+    .map(|json| decode(&json))
     .transpose()
 }
 
-pub fn save_record(conn: &Connection, story_id: i64, record: &Record) -> Result<(), AppError> {
-    conn.execute(
-        "INSERT INTO youtube (story_id, upload) VALUES (?1, ?2)
-         ON CONFLICT(story_id) DO UPDATE SET upload = excluded.upload",
-        params![story_id, encode(record)?],
+/// The story's uploads with the channel of each.
+pub fn load_records(conn: &Connection, story_id: i64) -> Result<Vec<(String, Record)>, AppError> {
+    let mut statement = conn.prepare(
+        "SELECT channel_id, upload FROM youtube_uploads WHERE story_id = ?1 ORDER BY rowid",
     )?;
+    let rows = statement.query_map([story_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    rows.map(|row| {
+        let (channel_id, json) = row?;
+        Ok((channel_id, decode(&json)?))
+    })
+    .collect()
+}
+
+pub fn save_record(
+    conn: &Connection,
+    story_id: i64,
+    channel_id: &str,
+    record: &Record,
+) -> Result<(), AppError> {
+    conn.execute(
+        "INSERT INTO youtube_uploads (story_id, channel_id, upload) VALUES (?1, ?2, ?3)
+         ON CONFLICT(story_id, channel_id) DO UPDATE SET upload = excluded.upload",
+        params![story_id, channel_id, encode(record)?],
+    )?;
+    Ok(())
+}
+
+/// Whether the story has an upload from an older build that no channel has been given yet.
+pub fn has_unadopted(conn: &Connection, story_id: i64) -> Result<bool, AppError> {
+    Ok(load_column(
+        conn,
+        story_id,
+        "SELECT upload FROM youtube WHERE story_id = ?1",
+    )?
+    .is_some())
+}
+
+/// Gives the uploads saved before there were channels to `channel_id`. Unless that channel is `verified` as the one
+/// that made them, an unfinished session is dropped: it would continue on the channel that opened it.
+pub fn adopt_records(conn: &Connection, channel_id: &str, verified: bool) -> Result<(), AppError> {
+    let transaction = conn.unchecked_transaction()?;
+    transaction.execute(
+        "INSERT OR IGNORE INTO youtube_uploads (story_id, channel_id, upload)
+         SELECT story_id, ?1, CASE WHEN ?2 THEN upload ELSE json_remove(upload, '$.session_url') END
+         FROM youtube WHERE upload IS NOT NULL",
+        params![channel_id, verified],
+    )?;
+    transaction.execute(
+        "UPDATE youtube SET upload = NULL WHERE upload IS NOT NULL",
+        [],
+    )?;
+    transaction.commit()?;
     Ok(())
 }
 
@@ -170,7 +225,7 @@ pub fn run(
 ) -> Result<Record, AppError> {
     let previous = previous.unwrap_or_default();
     if previous.video_id.is_some() && !request.again {
-        return Err(AppError::new("this story is already on YouTube"));
+        return Err(AppError::new("this story is already on this channel"));
     }
     let (stamp, size) = stamp(request.video, &request.metadata)?;
     let mut record = Record {
@@ -357,7 +412,7 @@ mod tests {
         let error = go(&server, &file, Some(uploaded.clone()), false, false)
             .0
             .unwrap_err();
-        assert!(error.to_string().contains("already on YouTube"));
+        assert!(error.to_string().contains("already on this channel"));
 
         let server = Server::start(&[("200 OK", SESSION, ""), ("308 Resume Incomplete", "", "")]);
         let saved = go(&server, &file, Some(uploaded), true, true).1.unwrap();
@@ -366,12 +421,12 @@ mod tests {
     }
 
     #[test]
-    fn the_form_and_the_upload_are_stored_per_story_and_go_with_it() {
+    fn uploads_are_stored_per_story_and_channel_and_go_with_the_story() {
         let conn = Connection::open_in_memory().unwrap();
         db::init(&conn).unwrap();
         let story = db::create_story(&conn, "S", "").unwrap().id;
         assert_eq!(load_form(&conn, story).unwrap(), None);
-        assert_eq!(load_record(&conn, story).unwrap(), None);
+        assert_eq!(load_record(&conn, story, "a").unwrap(), None);
         let form = Form {
             title: "T".into(),
             ..Form::default()
@@ -380,11 +435,23 @@ mod tests {
             resolution: "4k".into(),
             ..Record::default()
         };
-        save_record(&conn, story, &record).unwrap();
+        save_record(&conn, story, "a", &record).unwrap();
         save_form(&conn, story, &form).unwrap();
         assert_eq!(load_form(&conn, story).unwrap(), Some(form));
-        assert_eq!(load_record(&conn, story).unwrap(), Some(record));
+        assert_eq!(
+            load_record(&conn, story, "a").unwrap(),
+            Some(record.clone())
+        );
+        assert_eq!(load_record(&conn, story, "b").unwrap(), None);
+        save_record(&conn, story, "b", &Record::default()).unwrap();
+        assert_eq!(
+            load_records(&conn, story).unwrap(),
+            [
+                ("a".to_owned(), record),
+                ("b".to_owned(), Record::default())
+            ]
+        );
         db::delete_story(&conn, story).unwrap();
-        assert_eq!(load_record(&conn, story).unwrap(), None);
+        assert!(load_records(&conn, story).unwrap().is_empty());
     }
 }

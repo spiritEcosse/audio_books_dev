@@ -89,6 +89,8 @@ fn consent_url(
             ("response_type", "code"),
             ("scope", SCOPE),
             ("state", state),
+            // Without the chooser, adding a second channel would silently sign in to the first again.
+            ("prompt", "select_account consent"),
             ("code_challenge", &challenge),
             ("code_challenge_method", "S256"),
         ],
@@ -405,6 +407,7 @@ mod tests {
         assert_eq!(token, "r");
         assert_eq!(param(&asked, "scope"), SCOPE);
         assert_eq!(param(&asked, "code_challenge_method"), "S256");
+        assert_eq!(param(&asked, "prompt"), "select_account consent");
         assert!(param(&asked, "redirect_uri").starts_with("http://127.0.0.1:"));
         let form = format!("http://x/?{}", server.join().unwrap());
         assert_eq!(param(&form, "code"), "abc/1");
