@@ -1006,7 +1006,7 @@ pub fn run() {
                 workspace: data_dir,
                 export_cancel: Arc::new(AtomicBool::new(false)),
             });
-            app.manage(youtube::commands::SignIn::default());
+            app.manage(youtube::commands::YoutubeState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1048,7 +1048,12 @@ pub fn run() {
             youtube::commands::youtube_connected,
             youtube::commands::connect_youtube,
             youtube::commands::cancel_youtube_connect,
-            youtube::commands::disconnect_youtube
+            youtube::commands::disconnect_youtube,
+            youtube::commands::get_youtube,
+            youtube::commands::save_youtube_form,
+            youtube::commands::upload_youtube,
+            youtube::commands::cancel_youtube_upload,
+            youtube::commands::retry_youtube_captions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

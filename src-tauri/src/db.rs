@@ -83,6 +83,12 @@ CREATE TABLE IF NOT EXISTS scene_assets (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (story_id, position, kind)
 );
+-- YouTube: the upload form and the last upload of a story, each as JSON (`youtube/job.rs`).
+CREATE TABLE IF NOT EXISTS youtube (
+    story_id INTEGER PRIMARY KEY REFERENCES stories(id) ON DELETE CASCADE,
+    form     TEXT,
+    upload   TEXT
+);
 CREATE TABLE IF NOT EXISTS scene_references (
     story_id  INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
     position  INTEGER NOT NULL,

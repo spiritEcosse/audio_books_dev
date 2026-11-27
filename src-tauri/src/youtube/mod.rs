@@ -4,4 +4,9 @@
 
 mod auth;
 pub mod commands;
+#[cfg(test)]
+mod fake;
+mod form;
+mod job;
 mod keychain;
+mod upload;
