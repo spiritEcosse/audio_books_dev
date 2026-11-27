@@ -1053,7 +1053,8 @@ pub fn run() {
             youtube::commands::save_youtube_form,
             youtube::commands::upload_youtube,
             youtube::commands::cancel_youtube_upload,
-            youtube::commands::retry_youtube_captions
+            youtube::commands::retry_youtube_captions,
+            youtube::commands::draft_youtube
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

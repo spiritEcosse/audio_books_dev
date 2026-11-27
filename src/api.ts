@@ -169,7 +169,59 @@ export interface ModelsInfo {
   selected: string;
 }
 
+export type YoutubeVisibility = "private" | "unlisted" | "public" | "scheduled";
+
+export interface YoutubeForm {
+  title: string;
+  description: string;
+  tags: string[];
+  visibility: YoutubeVisibility;
+  /** Unix seconds. */
+  publish_at: number | null;
+  made_for_kids: boolean | null;
+  synthetic_media: boolean | null;
+  subtitles: boolean;
+}
+
+export interface YoutubeUpload {
+  resolution: Resolution;
+  video_id: string | null;
+  privacy: string | null;
+  publish_at: string | null;
+  subtitles: "none" | "uploaded" | "pending";
+  captions_error: string | null;
+  unfinished: boolean;
+  already_uploaded: boolean;
+}
+
+export interface YoutubeInfo {
+  connected: boolean;
+  uploading: boolean;
+  form: YoutubeForm;
+  videos: VideoFile[];
+  upload: YoutubeUpload | null;
+}
+
+export type YoutubeDraft = Pick<YoutubeForm, "title" | "description" | "tags">;
+
+export interface YoutubeProgress {
+  story_id: number;
+  percent: number;
+}
+
 export const api = {
+  getYoutube: (storyId: number) => invoke<YoutubeInfo>("get_youtube", { storyId }),
+  connectYoutube: () => invoke<void>("connect_youtube"),
+  cancelYoutubeConnect: () => invoke<void>("cancel_youtube_connect"),
+  disconnectYoutube: () => invoke<void>("disconnect_youtube"),
+  saveYoutubeForm: (storyId: number, form: YoutubeForm) =>
+    invoke<void>("save_youtube_form", { storyId, form }),
+  draftYoutube: (storyId: number) => invoke<YoutubeDraft>("draft_youtube", { storyId }),
+  uploadYoutube: (storyId: number, resolution: Resolution, form: YoutubeForm, again: boolean) =>
+    invoke<YoutubeUpload | null>("upload_youtube", { storyId, resolution, form, again }),
+  cancelYoutubeUpload: () => invoke<void>("cancel_youtube_upload"),
+  retryYoutubeCaptions: (storyId: number) =>
+    invoke<YoutubeUpload>("retry_youtube_captions", { storyId }),
   listStories: () => invoke<Story[]>("list_stories"),
   createStory: (title: string, text: string) =>
     invoke<Story>("create_story", { title, text }),
