@@ -13,6 +13,7 @@ use serde_json::Value;
 use super::form::Form;
 use super::upload::{self, Api};
 use crate::error::AppError;
+use crate::upscale;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -66,7 +67,10 @@ impl Record {
                 Some(_) => "pending",
             },
             captions_error: self.captions_error.clone(),
-            unfinished: self.video_id.is_none() && self.session_url.is_some(),
+            // A session of an older 1080p file cannot continue: the upload now sends the 4K video.
+            unfinished: self.video_id.is_none()
+                && self.session_url.is_some()
+                && self.resolution == upscale::LABEL,
             already_uploaded: self.on_youtube(),
         }
     }
@@ -194,7 +198,6 @@ fn stamp(video: &Path, metadata: &Value) -> Result<(String, u64), AppError> {
 
 pub struct Request<'a> {
     pub video: &'a Path,
-    pub resolution: &'a str,
     pub metadata: Value,
     pub subtitles: Option<String>,
     /// The user confirmed uploading a story that is already on YouTube.
@@ -229,7 +232,7 @@ pub fn run(
     }
     let (stamp, size) = stamp(request.video, &request.metadata)?;
     let mut record = Record {
-        resolution: request.resolution.to_owned(),
+        resolution: upscale::LABEL.to_owned(),
         session_url: previous
             .session_url
             .filter(|_| previous.video_id.is_none() && previous.stamp == stamp),
@@ -317,7 +320,6 @@ mod tests {
     ) -> (Result<Record, AppError>, Option<Record>) {
         let request = Request {
             video: file,
-            resolution: "4k",
             metadata: json!({"snippet": {"title": "T"}}),
             subtitles: Some("srt".into()),
             again,
@@ -336,6 +338,17 @@ mod tests {
             &mut |_, _| flag.store(cancel, Ordering::SeqCst),
         );
         (result, saved)
+    }
+
+    #[test]
+    fn an_unfinished_upload_of_an_older_1080p_video_is_not_offered_for_resuming() {
+        let record = |resolution: &str| Record {
+            resolution: resolution.into(),
+            session_url: Some("u".into()),
+            ..Record::default()
+        };
+        assert!(record("4k").view().unfinished);
+        assert!(!record("1080p").view().unfinished);
     }
 
     #[test]

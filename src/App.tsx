@@ -216,7 +216,7 @@ export default function App() {
                 <YoutubePanel
                   key={detail.story.id}
                   storyId={detail.story.id}
-                  videosKey={media.videos.map((video) => video.file_path).join()}
+                  videosKey={media.video ?? ""}
                   channelsKey={channelsKey}
                   onOpenSettings={openSettings}
                 />

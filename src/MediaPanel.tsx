@@ -1,5 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { api, RESOLUTIONS, type MediaInfo, type Scene } from "./api";
+import { api, type MediaInfo, type Scene } from "./api";
 import { BusyButton } from "./BusyButton";
 import { Characters } from "./Characters";
 import { ExportProgress } from "./ExportProgress";
@@ -28,6 +28,7 @@ export function MediaPanel({ media, scenes, disabled, busy, onChange }: Props) {
     findAsset(media, position, kind)?.status === "ready";
   const allScenesReady =
     scenes.length > 0 && scenes.every((scene) => readyFor(scene.position, "image") && readyFor(scene.position, "audio"));
+  const toUpscale = finishedImages.filter((a) => a.upscaled === null).length;
   const selectedVoice = media.voices.find((voice) => voice.id === media.voice_id);
   return (
     <section className="media-panel">
@@ -115,59 +116,46 @@ export function MediaPanel({ media, scenes, disabled, busy, onChange }: Props) {
         >
           Обновить
         </BusyButton>
-        {RESOLUTIONS.map((resolution) => {
-          const key = `panel:upscale-${resolution}`;
-          const todo = finishedImages.filter((a) => !a.upscaled.some((version) => version.label === resolution));
-          return (
-            <BusyButton
-              key={resolution}
-              busy={busy}
-              tag={key}
-              disabled={locked || todo.length === 0}
-              title="Upscayl + ffmpeg: бесплатно, локально, около 25 секунд на картинку. Файлы лежат рядом с оригиналами"
-              onClick={() =>
-                onChange(() => api.upscaleImages(media.story_id, resolution), {
-                  key,
-                  label: `Улучшаю до ${resolution}… около 25 секунд на картинку`,
-                })
-              }
-            >
-              Улучшить все картинки до {resolution} ({todo.length})
-            </BusyButton>
-          );
-        })}
-        {RESOLUTIONS.map((resolution) => {
-          const key = `panel:export-${resolution}`;
-          return (
-            <BusyButton
-              key={resolution}
-              busy={busy}
-              tag={key}
-              disabled={locked || !allScenesReady}
-              title={
-                allScenesReady
-                  ? "Зум или панорама на каждой сцене, озвучка, плавные переходы. Бесплатно, но долго: несколько секунд на секунду видео"
-                  : "Нужны готовые картинки и озвучка для всех сцен"
-              }
-              onClick={() =>
-                onChange(() => api.exportVideo(media.story_id, resolution), {
-                  key,
-                  label: `Собираю видео ${resolution}…`,
-                })
-              }
-            >
-              Собрать видео {resolution}
-            </BusyButton>
-          );
-        })}
+        <BusyButton
+          busy={busy}
+          tag="panel:upscale"
+          disabled={locked || toUpscale === 0}
+          title="Upscayl + ffmpeg: бесплатно, локально, около 25 секунд на картинку. Файлы лежат рядом с оригиналами"
+          onClick={() =>
+            onChange(() => api.upscaleImages(media.story_id), {
+              key: "panel:upscale",
+              label: "Улучшаю до 4K… около 25 секунд на картинку",
+            })
+          }
+        >
+          Улучшить все картинки до 4K ({toUpscale})
+        </BusyButton>
+        <BusyButton
+          busy={busy}
+          tag="panel:export"
+          disabled={locked || !allScenesReady}
+          title={
+            allScenesReady
+              ? "Зум или панорама на каждой сцене, озвучка, плавные переходы. Бесплатно, но долго: несколько секунд на секунду видео"
+              : "Нужны готовые картинки и озвучка для всех сцен"
+          }
+          onClick={() =>
+            onChange(() => api.exportVideo(media.story_id), {
+              key: "panel:export",
+              label: "Собираю видео 4K…",
+            })
+          }
+        >
+          Собрать видео 4K
+        </BusyButton>
       </div>
-      <ExportProgress storyId={media.story_id} active={busy.some((op) => op.key.startsWith("panel:export-"))} />
-      {media.videos.map((video) => (
-        <div key={video.label} className="export-result">
-          <strong>Видео {video.label}</strong>
-          <video className="export-video" controls preload="metadata" src={convertFileSrc(video.file_path)} />
+      <ExportProgress storyId={media.story_id} active={busy.some((op) => op.key === "panel:export")} />
+      {media.video && (
+        <div className="export-result">
+          <strong>Видео 4K</strong>
+          <video className="export-video" controls preload="metadata" src={convertFileSrc(media.video)} />
         </div>
-      ))}
+      )}
       <p className="muted">
         «Поставить в очередь» в сцене запоминает запрос (цену показывает подсказка при наведении), «Сгенерировать (N кр.)» запускает (через Claude и коннектор ElevenLabs). Точную цену можно измерить в меню «▾». Картинки сцен 1+ берут за образец картинку сцены 0 и свой референс. Цены — оценка на{" "}
         {media.prices_measured_on}, озвучка ≈{media.speech_credits_per_char} кр. за символ. Файлы: {media.media_dir}

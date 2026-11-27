@@ -272,8 +272,8 @@ pub struct SceneAsset {
     /// Generation was launched and paid for; only its result is missing (collect it, never generate again).
     pub awaiting_result: bool,
     pub error: Option<String>,
-    /// Enlarged copies (1080p / 4K) that exist next to the image file; empty for audio.
-    pub upscaled: Vec<upscale::Upscaled>,
+    /// The 4K copy next to the image file, once made; None for audio.
+    pub upscaled: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -510,8 +510,8 @@ pub fn list_assets(conn: &Connection, story_id: i64) -> Result<Vec<SceneAsset>, 
         let kind: String = row.get(1)?;
         let file_path: Option<String> = row.get(3)?;
         let upscaled = match (&file_path, kind.as_str()) {
-            (Some(path), KIND_IMAGE) => upscale::existing_versions(Path::new(path)),
-            _ => Vec::new(),
+            (Some(path), KIND_IMAGE) => upscale::existing_upscaled(Path::new(path)),
+            _ => None,
         };
         Ok(SceneAsset {
             position: row.get(0)?,

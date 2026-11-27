@@ -69,15 +69,6 @@ export interface StoryDetail {
 
 export type AssetKind = "image" | "audio";
 
-export const RESOLUTIONS = ["1080p", "4k"] as const;
-export type Resolution = (typeof RESOLUTIONS)[number];
-
-/** An enlarged copy of a scene image that exists on disk. */
-export interface UpscaledFile {
-  label: Resolution;
-  file_path: string;
-}
-
 /** Sent as the `export-progress` event while a video export runs. */
 export interface ExportProgress {
   story_id: number;
@@ -85,12 +76,6 @@ export interface ExportProgress {
   stage: "clip" | "join";
   scene: number;
   scenes: number;
-}
-
-/** A finished exported video in the story's media folder. */
-export interface VideoFile {
-  label: Resolution;
-  file_path: string;
 }
 
 export interface SceneAsset {
@@ -107,7 +92,7 @@ export interface SceneAsset {
   /** Launched and paid for, result not received yet: collect it, do not generate again. */
   awaiting_result: boolean;
   error: string | null;
-  upscaled: UpscaledFile[];
+  upscaled: string | null;
 }
 
 export interface SceneReference {
@@ -156,7 +141,7 @@ export interface MediaInfo {
   references: SceneReference[];
   characters: Character[];
   character_off: SceneCharacterOff[];
-  videos: VideoFile[];
+  video: string | null;
 }
 
 export interface ModelOption {
@@ -200,7 +185,8 @@ export interface YoutubeChannels {
 }
 
 export interface YoutubeUpload {
-  resolution: Resolution;
+  /** "4k"; uploads made by an older build may say "1080p". */
+  resolution: string;
   video_id: string | null;
   privacy: string | null;
   publish_at: string | null;
@@ -215,7 +201,7 @@ export type YoutubeChannelUpload = YoutubeUpload & { channel_id: string };
 export interface YoutubeInfo {
   uploading: boolean;
   form: YoutubeForm;
-  videos: VideoFile[];
+  video: string | null;
   uploads: YoutubeChannelUpload[];
 }
 
@@ -236,8 +222,8 @@ export const api = {
   saveYoutubeForm: (storyId: number, form: YoutubeForm) =>
     invoke<void>("save_youtube_form", { storyId, form }),
   draftYoutube: (storyId: number) => invoke<YoutubeDraft>("draft_youtube", { storyId }),
-  uploadYoutube: (storyId: number, resolution: Resolution, form: YoutubeForm, again: boolean) =>
-    invoke<YoutubeUpload | null>("upload_youtube", { storyId, resolution, form, again }),
+  uploadYoutube: (storyId: number, form: YoutubeForm, again: boolean) =>
+    invoke<YoutubeUpload | null>("upload_youtube", { storyId, form, again }),
   cancelYoutubeUpload: () => invoke<void>("cancel_youtube_upload"),
   retryYoutubeCaptions: (storyId: number, channelId: string) =>
     invoke<YoutubeUpload>("retry_youtube_captions", { storyId, channelId }),
@@ -291,12 +277,12 @@ export const api = {
   /** Gives up on a paid generation that never arrived, so it can be generated (and paid) again. */
   abandonGeneration: (storyId: number, position: number, kind: AssetKind) =>
     invoke<MediaInfo>("abandon_generation", { storyId, position, kind }),
-  /** Upscayl + ffmpeg: writes 1080p / 4K copies next to the finished image(s); one scene, or all when no position. */
-  upscaleImages: (storyId: number, resolution: Resolution, position?: number) =>
-    invoke<MediaInfo>("upscale_images", { storyId, resolution, position: position ?? null }),
+  /** Upscayl + ffmpeg: writes 4K copies next to the finished image(s); one scene, or all when no position. */
+  upscaleImages: (storyId: number, position?: number) =>
+    invoke<MediaInfo>("upscale_images", { storyId, position: position ?? null }),
   /** Joins all scenes (zoom/pan clip + narration, fades) into one video. Long: minutes to tens of minutes. */
-  exportVideo: (storyId: number, resolution: Resolution) =>
-    invoke<MediaInfo>("export_video", { storyId, resolution }),
+  exportVideo: (storyId: number) =>
+    invoke<MediaInfo>("export_video", { storyId }),
   cancelExport: () => invoke<void>("cancel_export"),
   setSceneReference: (storyId: number, position: number, fileName: string, bytes: number[]) =>
     invoke<MediaInfo>("set_scene_reference", { storyId, position, fileName, bytes }),

@@ -13,7 +13,6 @@ use super::form::Form;
 use super::job::{self, View};
 use super::upload;
 use crate::error::AppError;
-use crate::upscale::Resolution;
 use crate::{AppState, claude, db, media, selected_model, video};
 
 const PROGRESS_EVENT: &str = "youtube-progress";
@@ -54,7 +53,7 @@ pub struct YoutubeState {
 pub struct YoutubeInfo {
     uploading: bool,
     form: Form,
-    videos: Vec<video::VideoFile>,
+    video: Option<String>,
     uploads: Vec<ChannelUpload>,
 }
 
@@ -89,7 +88,7 @@ pub fn get_youtube(
     Ok(YoutubeInfo {
         uploading: youtube.upload.running.load(Ordering::SeqCst),
         form,
-        videos: video::existing_videos(&media::story_media_dir(&state.workspace, story_id)),
+        video: video::existing_video(&media::story_media_dir(&state.workspace, story_id)),
         uploads,
     })
 }
@@ -150,14 +149,13 @@ fn unix_now() -> Result<i64, AppError> {
 fn upload_story(
     app: &tauri::AppHandle,
     story_id: i64,
-    resolution: Resolution,
     form: Form,
     again: bool,
     cancel: &AtomicBool,
 ) -> Result<Option<View>, AppError> {
     let state = app.state::<AppState>();
     let media_dir = media::story_media_dir(&state.workspace, story_id);
-    let file = video::video_path(&media_dir, resolution);
+    let file = video::video_path(&media_dir);
     let metadata = form.metadata(unix_now()?)?;
     let channel_id = form
         .channel_id
@@ -186,7 +184,6 @@ fn upload_story(
     };
     let request = job::Request {
         video: &file,
-        resolution: resolution.label(),
         metadata,
         subtitles,
         again,
@@ -215,17 +212,13 @@ pub async fn upload_youtube(
     app: tauri::AppHandle,
     youtube: State<'_, YoutubeState>,
     story_id: i64,
-    resolution: String,
     form: Form,
     again: bool,
 ) -> Result<Option<View>, AppError> {
-    let resolution = Resolution::parse(&resolution)?;
     let (_taken, cancel) = youtube.upload.take("another video is being uploaded")?;
-    tauri::async_runtime::spawn_blocking(move || {
-        upload_story(&app, story_id, resolution, form, again, &cancel)
-    })
-    .await
-    .map_err(|e| AppError::new(format!("the upload stopped: {e}")))?
+    tauri::async_runtime::spawn_blocking(move || upload_story(&app, story_id, form, again, &cancel))
+        .await
+        .map_err(|e| AppError::new(format!("the upload stopped: {e}")))?
 }
 
 #[tauri::command]
