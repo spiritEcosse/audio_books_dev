@@ -172,6 +172,7 @@ fn wait_for_code(
 
 #[derive(Deserialize, Default)]
 struct TokenReply {
+    access_token: Option<String>,
     refresh_token: Option<String>,
     scope: Option<String>,
     error: Option<String>,
@@ -186,34 +187,47 @@ pub fn http() -> ureq::Agent {
         .into()
 }
 
+/// A form post to the token address. `Err` carries Google's error code, if it sent one.
+fn token_request(
+    client: &Client,
+    form: &[(&str, &str)],
+) -> Result<TokenReply, (Option<String>, AppError)> {
+    let failed = |e: ureq::Error| (None, AppError::new(format!("cannot reach Google: {e}")));
+    let credentials = [
+        ("client_id", client.client_id.as_str()),
+        ("client_secret", client.client_secret.as_str()),
+    ];
+    let mut response = http()
+        .post(&client.token_uri)
+        .send_form(credentials.iter().chain(form).copied())
+        .map_err(failed)?;
+    let status = response.status();
+    let body = response.body_mut().read_to_string().map_err(failed)?;
+    let reply: TokenReply = serde_json::from_str(&body).unwrap_or_default();
+    if status.is_success() {
+        return Ok(reply);
+    }
+    let error = AppError::new(format!(
+        "Google refused the sign-in ({status}): {} {}",
+        reply.error.as_deref().unwrap_or_default(),
+        reply.error_description.unwrap_or_default()
+    ));
+    Err((reply.error, error))
+}
+
 fn exchange(
     client: &Client,
     code: &str,
     verifier: &str,
     redirect: &str,
 ) -> Result<String, AppError> {
-    let failed = |e: ureq::Error| AppError::new(format!("cannot reach Google: {e}"));
-    let mut response = http()
-        .post(&client.token_uri)
-        .send_form([
-            ("client_id", client.client_id.as_str()),
-            ("client_secret", client.client_secret.as_str()),
-            ("code", code),
-            ("code_verifier", verifier),
-            ("grant_type", "authorization_code"),
-            ("redirect_uri", redirect),
-        ])
-        .map_err(failed)?;
-    let status = response.status();
-    let body = response.body_mut().read_to_string().map_err(failed)?;
-    let reply: TokenReply = serde_json::from_str(&body).unwrap_or_default();
-    if !status.is_success() {
-        return Err(AppError::new(format!(
-            "Google refused the sign-in ({status}): {} {}",
-            reply.error.unwrap_or_default(),
-            reply.error_description.unwrap_or_default()
-        )));
-    }
+    let form = [
+        ("code", code),
+        ("code_verifier", verifier),
+        ("grant_type", "authorization_code"),
+        ("redirect_uri", redirect),
+    ];
+    let reply = token_request(client, &form).map_err(|(_, error)| error)?;
     // Google lets the user untick a permission on the consent screen.
     if !reply
         .scope
@@ -226,6 +240,28 @@ fn exchange(
     reply
         .refresh_token
         .ok_or_else(|| AppError::new("Google sent no refresh token"))
+}
+
+pub enum Refreshed {
+    Access(String),
+    /// The saved sign-in expired or was revoked: it is of no further use.
+    Expired,
+}
+
+/// A fresh access token (good for about an hour).
+pub fn refresh(client: &Client, refresh_token: &str) -> Result<Refreshed, AppError> {
+    let form = [
+        ("refresh_token", refresh_token),
+        ("grant_type", "refresh_token"),
+    ];
+    match token_request(client, &form) {
+        Ok(reply) => reply
+            .access_token
+            .map(Refreshed::Access)
+            .ok_or_else(|| AppError::new("Google sent no access token")),
+        Err((Some(code), _)) if code == "invalid_grant" => Ok(Refreshed::Expired),
+        Err((_, error)) => Err(error),
+    }
 }
 
 /// Signs in through the browser (`open` is given the consent address) and returns the refresh token. Blocks until
@@ -410,6 +446,22 @@ mod tests {
             "{error}"
         );
         assert!(!error.contains("secret"), "{error}");
+    }
+
+    #[test]
+    fn refresh_returns_an_access_token_or_says_the_sign_in_expired() {
+        let (address, server) = token_server("200 OK", r#"{"access_token":"fresh"}"#);
+        let outcome = refresh(&client(&address), "r1").unwrap();
+        assert!(matches!(outcome, Refreshed::Access(token) if token == "fresh"));
+        let form = format!("http://x/?{}", server.join().unwrap());
+        assert_eq!(param(&form, "refresh_token"), "r1");
+        assert_eq!(param(&form, "grant_type"), "refresh_token");
+
+        let (address, _server) = token_server("400 Bad Request", r#"{"error":"invalid_grant"}"#);
+        let outcome = refresh(&client(&address), "r").unwrap();
+        assert!(matches!(outcome, Refreshed::Expired));
+        let (address, _server) = token_server("500 Oops", "{}");
+        assert!(refresh(&client(&address), "r").is_err());
     }
 
     #[test]
