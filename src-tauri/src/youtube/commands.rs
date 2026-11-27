@@ -10,13 +10,14 @@ use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
+use super::draft::{self, Draft};
 use super::form::Form;
 use super::job::{self, View};
 use super::upload::{self, Api};
 use super::{auth, keychain};
 use crate::error::AppError;
 use crate::upscale::Resolution;
-use crate::{AppState, db, media, video};
+use crate::{AppState, claude, db, media, selected_model, video};
 
 /// Relative to the home folder.
 const CLIENT_FILE: &str = ".config/audio-books/youtube-client.json";
@@ -177,6 +178,37 @@ pub fn save_youtube_form(
 struct ProgressEvent {
     story_id: i64,
     percent: f64,
+}
+
+/// A title, description and tags written by Claude from the story; nothing is saved or uploaded.
+#[tauri::command]
+pub async fn draft_youtube(app: tauri::AppHandle, story_id: i64) -> Result<Draft, AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let (model, story) = {
+            let conn = state.conn()?;
+            let story = db::get_story(&conn, story_id)?;
+            let scenes = db::list_scenes(&conn, story_id)?
+                .into_iter()
+                .map(|scene| scene.text)
+                .collect::<Vec<_>>()
+                .join("\n");
+            let text = if story.text.trim().is_empty() {
+                scenes
+            } else {
+                story.text
+            };
+            if text.trim().is_empty() {
+                return Err(AppError::new("the story has no text yet"));
+            }
+            let prompt = format!("Working title: {}\n\n{text}", story.title);
+            (selected_model(&conn)?, prompt)
+        };
+        let reply = claude::run(&state.workspace, &model, draft::SYSTEM_PROMPT, &story, None)?;
+        draft::parse(&reply.text)
+    })
+    .await
+    .map_err(|e| AppError::new(format!("the draft stopped: {e}")))?
 }
 
 fn unix_now() -> Result<i64, AppError> {

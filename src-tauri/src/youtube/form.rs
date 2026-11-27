@@ -5,9 +5,9 @@ use serde_json::{Value, json};
 
 use crate::error::AppError;
 
-const MAX_TITLE_CHARS: usize = 100;
-const MAX_DESCRIPTION_BYTES: usize = 5000;
-const MAX_TAGS_CHARS: usize = 500;
+pub const MAX_TITLE_CHARS: usize = 100;
+pub const MAX_DESCRIPTION_BYTES: usize = 5000;
+pub const MAX_TAGS_CHARS: usize = 500;
 const LANGUAGE: &str = "en";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,7 +51,7 @@ impl Default for Form {
 }
 
 /// YouTube counts the commas between tags, and quotes around a tag with a space.
-fn tags_chars(tags: &[String]) -> usize {
+pub fn tags_chars(tags: &[String]) -> usize {
     let each: usize = tags
         .iter()
         .map(|tag| tag.chars().count() + if tag.contains(' ') { 2 } else { 0 })

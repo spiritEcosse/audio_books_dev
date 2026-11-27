@@ -246,3 +246,15 @@ video.export-video {
 button[aria-busy="true"] {
   cursor: progress;
 }
+.youtube-panel { background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 8px 14px; margin-bottom: 12px; }
+.youtube-panel summary { cursor: pointer; font-weight: 600; }
+.youtube-panel > * + * { margin-top: 10px; }
+.youtube-panel .media-actions { flex-wrap: wrap; align-items: center; }
+.youtube-panel label { display: flex; flex-direction: column; gap: 4px; }
+.youtube-fields { border: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.youtube-panel label.youtube-check, .youtube-question label { flex-direction: row; align-items: center; gap: 6px; }
+.youtube-question { display: flex; gap: 16px; border: none; padding: 0; margin: 0; }
+.youtube-question legend { margin-bottom: 4px; }
+.youtube-tags { display: flex; flex-direction: column; gap: 6px; }
+.youtube-tags ul { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.youtube-tags li { display: flex; align-items: center; gap: 4px; background: #eef1f4; border-radius: 12px; padding: 2px 4px 2px 10px; }

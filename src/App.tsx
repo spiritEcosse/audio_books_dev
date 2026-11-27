@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type MediaInfo, type ModelsInfo, type ProfilesInfo, type Story, type StoryDetail, type StorySettings } from "./api";
 import { Chat } from "./Chat";
 import { MediaPanel } from "./MediaPanel";
+import { YoutubePanel } from "./YoutubePanel";
 import { type MediaBusy, type MediaChange } from "./mediaCost";
 import { Revisions } from "./Revisions";
 import { ModelPicker } from "./ModelPicker";
@@ -189,6 +190,13 @@ export default function App() {
                   disabled={pendingText !== null}
                   busy={mediaOps}
                   onChange={changeMedia}
+                />
+              )}
+              {media && media.story_id === detail.story.id && (
+                <YoutubePanel
+                  key={detail.story.id}
+                  storyId={detail.story.id}
+                  videosKey={media.videos.map((video) => video.file_path).join()}
                 />
               )}
               <SceneList
