@@ -15,6 +15,7 @@ mod stats;
 mod subtitles;
 mod upscale;
 mod video;
+mod youtube;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1005,6 +1006,7 @@ pub fn run() {
                 workspace: data_dir,
                 export_cancel: Arc::new(AtomicBool::new(false)),
             });
+            app.manage(youtube::commands::SignIn::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1042,7 +1044,11 @@ pub fn run() {
             set_scene_character,
             upscale_images,
             export_video,
-            cancel_export
+            cancel_export,
+            youtube::commands::youtube_connected,
+            youtube::commands::connect_youtube,
+            youtube::commands::cancel_youtube_connect,
+            youtube::commands::disconnect_youtube
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
