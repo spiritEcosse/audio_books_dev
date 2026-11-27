@@ -4,6 +4,7 @@
 //! records *requests* in `scene_assets`; Claude fulfils them, drops files into the story's media
 //! folder and flips the row to `ready` (see "Media bridge" in CLAUDE.md).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, params};
@@ -482,6 +483,19 @@ pub fn request_missing(conn: &Connection, story_id: i64) -> Result<usize, AppErr
     Ok(queued)
 }
 
+/// The text each finished narration was generated from, by scene position. A scene edited since keeps the voiced
+/// text here; an unknown one (stored empty) is left out.
+pub fn voiced_texts(conn: &Connection, story_id: i64) -> Result<HashMap<i64, String>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT position, source FROM scene_assets
+         WHERE story_id = ?1 AND kind = ?2 AND status = ?3 AND source <> ''",
+    )?;
+    let rows = stmt.query_map(params![story_id, KIND_AUDIO, STATUS_READY], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
 pub fn list_assets(conn: &Connection, story_id: i64) -> Result<Vec<SceneAsset>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT a.position, a.kind, a.status, a.file_path, a.model_id, a.credits, a.error, a.voice_id, a.estimate_credits,
@@ -666,6 +680,23 @@ mod tests {
             ),
             ("ready", Some("/a.mp3"), true)
         );
+    }
+
+    #[test]
+    fn voiced_texts_keep_the_text_the_audio_was_made_from_and_skip_unknown_ones() {
+        let (conn, story) = setup();
+        request_asset(&conn, story, 0, KIND_AUDIO).unwrap();
+        request_asset(&conn, story, 0, KIND_IMAGE).unwrap();
+        assert!(voiced_texts(&conn, story).unwrap().is_empty());
+        conn.execute("UPDATE scene_assets SET status = 'ready'", [])
+            .unwrap();
+        let original = scene_source(&conn, story, 0, KIND_AUDIO).unwrap();
+        conn.execute("UPDATE scenes SET text = 'edited since'", [])
+            .unwrap();
+        assert_eq!(voiced_texts(&conn, story).unwrap().get(&0), Some(&original));
+        conn.execute("UPDATE scene_assets SET source = ''", [])
+            .unwrap();
+        assert!(voiced_texts(&conn, story).unwrap().is_empty());
     }
 
     #[test]
