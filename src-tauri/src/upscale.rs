@@ -1,16 +1,14 @@
 //! Local image upscaling for video export. Upscayl (Real-ESRGAN, the illustration model
-//! `digital-art-4x`) enlarges a scene image, then ffmpeg fits it exactly to 1080p or 4K
+//! `digital-art-4x`) enlarges a scene image, then ffmpeg fits it exactly to 4K
 //! (cover-scale + centre crop, so a non-16:9 image is cropped rather than squeezed).
 //!
-//! The result lives next to the source image as `<image name>-1080p.png` / `-4k.png`, so no database column is
+//! The result lives next to the source image as `<image name>-4k.png`, so no database column is
 //! needed: a version exists when its file does, and a regenerated image (new versioned name) starts without one.
 //! The Upscayl binary and model are bundled from `resources/upscayl` (see scripts/fetch-upscayl.sh).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-use serde::Serialize;
 
 use crate::claude;
 use crate::error::AppError;
@@ -23,71 +21,22 @@ const OUTPUT_EXTENSION: &str = "png";
 const FETCH_HINT: &str = "run scripts/fetch-upscayl.sh and rebuild the app";
 const ERROR_TAIL_CHARS: usize = 400;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Resolution {
-    /// 1920x1080, what a regular YouTube video needs.
-    Hd,
-    /// 3840x2160: headroom for zooms and pans, and YouTube re-encodes 4K uploads better.
-    Uhd,
-}
+/// 3840x2160: headroom for zooms and pans, and YouTube re-encodes 4K uploads better.
+pub const SIZE: (u32, u32) = (3840, 2160);
+/// Names the enlarged copy and the exported video.
+pub const LABEL: &str = "4k";
+/// Upscayl enlarges the source this many times; 1024px wide images reach 4K at 4x.
+const SCALE: u32 = 4;
 
-impl Resolution {
-    pub const ALL: [Resolution; 2] = [Resolution::Hd, Resolution::Uhd];
-
-    pub fn parse(value: &str) -> Result<Self, AppError> {
-        Self::ALL
-            .into_iter()
-            .find(|resolution| resolution.label() == value)
-            .ok_or_else(|| AppError::new(format!("unknown resolution: {value}")))
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Resolution::Hd => "1080p",
-            Resolution::Uhd => "4k",
-        }
-    }
-
-    pub fn size(self) -> (u32, u32) {
-        match self {
-            Resolution::Hd => (1920, 1080),
-            Resolution::Uhd => (3840, 2160),
-        }
-    }
-
-    /// Upscayl enlarges 2x or 4x of the source; 1024px wide images reach 1080p at 2x and 4K at 4x.
-    fn scale(self) -> u32 {
-        match self {
-            Resolution::Hd => 2,
-            Resolution::Uhd => 4,
-        }
-    }
-}
-
-/// A finished enlarged copy of a scene image.
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct Upscaled {
-    pub label: &'static str,
-    pub file_path: String,
-}
-
-pub fn upscaled_path(image: &Path, resolution: Resolution) -> PathBuf {
+pub fn upscaled_path(image: &Path) -> PathBuf {
     let stem = image.file_stem().unwrap_or_default().to_string_lossy();
-    image.with_file_name(format!("{stem}-{}.{OUTPUT_EXTENSION}", resolution.label()))
+    image.with_file_name(format!("{stem}-{LABEL}.{OUTPUT_EXTENSION}"))
 }
 
-/// The enlarged copies of `image` that exist on disk.
-pub fn existing_versions(image: &Path) -> Vec<Upscaled> {
-    Resolution::ALL
-        .into_iter()
-        .filter_map(|resolution| {
-            let path = upscaled_path(image, resolution);
-            path.is_file().then(|| Upscaled {
-                label: resolution.label(),
-                file_path: path.display().to_string(),
-            })
-        })
-        .collect()
+/// The enlarged copy of `image`, if it exists on disk.
+pub fn existing_upscaled(image: &Path) -> Option<String> {
+    let path = upscaled_path(image);
+    path.is_file().then(|| path.display().to_string())
 }
 
 fn upscayl_args(input: &Path, output: &Path, scale: u32, models: &Path) -> Vec<OsString> {
@@ -113,8 +62,8 @@ fn fit_filter(width: u32, height: u32) -> String {
     )
 }
 
-fn ffmpeg_args(input: &Path, output: &Path, resolution: Resolution) -> Vec<OsString> {
-    let (width, height) = resolution.size();
+fn ffmpeg_args(input: &Path, output: &Path) -> Vec<OsString> {
+    let (width, height) = SIZE;
     vec![
         "-y".into(),
         "-v".into(),
@@ -180,33 +129,27 @@ fn run_tool(program: &Path, args: &[OsString], name: &str) -> Result<(), AppErro
     )))
 }
 
-fn enlarge(
-    image: &Path,
-    resolution: Resolution,
-    tools: &Tools,
-    raw: &Path,
-    part: &Path,
-) -> Result<(), AppError> {
+fn enlarge(image: &Path, tools: &Tools, raw: &Path, part: &Path) -> Result<(), AppError> {
     run_tool(
         &tools.upscayl,
-        &upscayl_args(image, raw, resolution.scale(), &tools.models),
+        &upscayl_args(image, raw, SCALE, &tools.models),
         "Upscayl",
     )?;
-    run_tool(&tools.ffmpeg, &ffmpeg_args(raw, part, resolution), "ffmpeg")
+    run_tool(&tools.ffmpeg, &ffmpeg_args(raw, part), "ffmpeg")
 }
 
-/// Enlarges one image to the exact size and returns the new file. Blocking: about 25 seconds per image.
-pub fn upscale(image: &Path, resolution: Resolution, tools: &Tools) -> Result<PathBuf, AppError> {
+/// Enlarges one image to 4K and returns the new file. Blocking: about 25 seconds per image.
+pub fn upscale(image: &Path, tools: &Tools) -> Result<PathBuf, AppError> {
     if !image.is_file() {
         return Err(AppError::new(format!(
             "image not found: {}",
             image.display()
         )));
     }
-    let target = upscaled_path(image, resolution);
+    let target = upscaled_path(image);
     let raw = target.with_extension("raw.png");
     let part = target.with_extension("part.png");
-    let result = enlarge(image, resolution, tools, &raw, &part).and_then(|()| {
+    let result = enlarge(image, tools, &raw, &part).and_then(|()| {
         std::fs::rename(&part, &target)
             .map_err(|e| AppError::new(format!("cannot save {}: {e}", target.display())))
     });
@@ -228,29 +171,9 @@ mod tests {
     }
 
     #[test]
-    fn resolution_parses_only_known_labels() {
-        assert_eq!(Resolution::parse("1080p").unwrap(), Resolution::Hd);
-        assert_eq!(Resolution::parse("4k").unwrap(), Resolution::Uhd);
-        assert!(Resolution::parse("8k").is_err());
-        assert!(Resolution::parse("").is_err());
-    }
-
-    #[test]
-    fn resolutions_have_the_youtube_sizes_and_enough_scale() {
-        assert_eq!(Resolution::Hd.size(), (1920, 1080));
-        assert_eq!(Resolution::Uhd.size(), (3840, 2160));
-        assert_eq!((Resolution::Hd.scale(), Resolution::Uhd.scale()), (2, 4));
-    }
-
-    #[test]
     fn upscaled_path_sits_next_to_the_image_with_the_label() {
-        let image = Path::new("/media/7/scene-0-image-v1.webp");
         assert_eq!(
-            upscaled_path(image, Resolution::Hd),
-            Path::new("/media/7/scene-0-image-v1-1080p.png")
-        );
-        assert_eq!(
-            upscaled_path(image, Resolution::Uhd),
+            upscaled_path(Path::new("/media/7/scene-0-image-v1.webp")),
             Path::new("/media/7/scene-0-image-v1-4k.png")
         );
     }
@@ -258,8 +181,8 @@ mod tests {
     #[test]
     fn fit_filter_covers_and_crops_to_the_exact_size() {
         assert_eq!(
-            fit_filter(1920, 1080),
-            "scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos,crop=1920:1080"
+            fit_filter(3840, 2160),
+            "scale=3840:2160:force_original_aspect_ratio=increase:flags=lanczos,crop=3840:2160"
         );
     }
 
@@ -296,7 +219,7 @@ mod tests {
 
     #[test]
     fn ffmpeg_args_overwrite_quietly_and_end_with_the_output() {
-        let args = ffmpeg_args(Path::new("raw.png"), Path::new("out.png"), Resolution::Uhd);
+        let args = ffmpeg_args(Path::new("raw.png"), Path::new("out.png"));
         let text: Vec<String> = args
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
@@ -307,15 +230,16 @@ mod tests {
     }
 
     #[test]
-    fn existing_versions_lists_only_files_that_exist() {
+    fn existing_upscaled_is_found_only_once_the_file_exists() {
         let dir = temp_dir("versions");
         let image = dir.join("scene-0-image-v1.webp");
-        assert!(existing_versions(&image).is_empty());
-        std::fs::write(upscaled_path(&image, Resolution::Uhd), b"x").unwrap();
-        let versions = existing_versions(&image);
-        assert_eq!(versions.len(), 1);
-        assert_eq!(versions[0].label, "4k");
-        assert!(versions[0].file_path.ends_with("scene-0-image-v1-4k.png"));
+        assert_eq!(existing_upscaled(&image), None);
+        std::fs::write(upscaled_path(&image), b"x").unwrap();
+        assert!(
+            existing_upscaled(&image)
+                .unwrap()
+                .ends_with("scene-0-image-v1-4k.png")
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -336,8 +260,7 @@ mod tests {
             models: "m".into(),
             ffmpeg: "f".into(),
         };
-        let err =
-            upscale(Path::new("/nonexistent/scene.webp"), Resolution::Hd, &tools).unwrap_err();
+        let err = upscale(Path::new("/nonexistent/scene.webp"), &tools).unwrap_err();
         assert!(err.to_string().contains("image not found"));
     }
 
@@ -369,28 +292,26 @@ mod tests {
                 .status()
                 .unwrap();
             assert!(made.success());
-            for resolution in Resolution::ALL {
-                let out = upscale(&image, resolution, &tools).unwrap();
-                let probe = Command::new("ffprobe")
-                    .args([
-                        "-v",
-                        "error",
-                        "-show_entries",
-                        "stream=width,height",
-                        "-of",
-                        "csv=p=0",
-                    ])
-                    .arg(&out)
-                    .output()
-                    .unwrap();
-                let (w, h) = resolution.size();
-                assert_eq!(
-                    String::from_utf8_lossy(&probe.stdout).trim(),
-                    format!("{w},{h}"),
-                    "{name} {resolution:?}"
-                );
-            }
-            assert!(!dir.join(format!("{name}-1080p.raw.png")).exists());
+            let out = upscale(&image, &tools).unwrap();
+            let probe = Command::new("ffprobe")
+                .args([
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "stream=width,height",
+                    "-of",
+                    "csv=p=0",
+                ])
+                .arg(&out)
+                .output()
+                .unwrap();
+            let (w, h) = SIZE;
+            assert_eq!(
+                String::from_utf8_lossy(&probe.stdout).trim(),
+                format!("{w},{h}"),
+                "{name}"
+            );
+            assert!(!dir.join(format!("{name}-4k.raw.png")).exists());
         }
         std::fs::remove_dir_all(dir).unwrap();
     }

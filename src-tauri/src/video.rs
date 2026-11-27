@@ -3,7 +3,7 @@
 //! scene only re-renders that scene; a final ffmpeg run joins the clips and mixes the audio.
 //!
 //! Timing: a scene's slot is LEAD + narration + TAIL seconds; its clip is TRANSITION longer so it overlaps the
-//! next clip during the fade. The result is `video-1080p.mp4` / `video-4k.mp4` in the story's media folder, with
+//! next clip during the fade. The result is `video-4k.mp4` in the story's media folder, with
 //! English subtitles beside it in an `.srt` file of the same name (see `subtitles`).
 
 use std::collections::hash_map::DefaultHasher;
@@ -20,7 +20,7 @@ use crate::claude;
 use crate::error::AppError;
 use crate::loudness::{self, Measurement};
 use crate::subtitles;
-use crate::upscale::{self, Resolution};
+use crate::upscale;
 
 /// The message of the error a cancelled export ends with; see `was_cancelled`.
 const CANCELLED_MESSAGE: &str = "export cancelled";
@@ -124,18 +124,12 @@ fn frame_count(secs: f64) -> u32 {
     (secs * f64::from(FPS)).ceil() as u32
 }
 
-fn sizes(resolution: Resolution) -> ((u32, u32), (u32, u32)) {
-    let work = match resolution {
-        Resolution::Hd => (2560, 1440),
-        Resolution::Uhd => (3840, 2160),
-    };
-    (resolution.size(), work)
-}
-
 /// The sub-pixel smooth zoom/pan: `perspective` cuts a window with fractional coordinates (unlike zoompan, which
 /// rounds to whole pixels and jitters). The image is decoded once and looped by the filter.
-pub fn motion_filter(motion: Motion, frames: u32, resolution: Resolution) -> String {
-    let ((out_w, out_h), (work_w, work_h)) = sizes(resolution);
+pub fn motion_filter(motion: Motion, frames: u32) -> String {
+    // The motion is cut from a frame as big as the output.
+    let (out_w, out_h) = upscale::SIZE;
+    let (work_w, work_h) = upscale::SIZE;
     let last = frames.saturating_sub(1).max(1);
     let p = format!("(on/{last})");
     let eased = format!("({p}*{p}*(3-2*{p}))");
@@ -158,13 +152,7 @@ pub fn motion_filter(motion: Motion, frames: u32, resolution: Resolution) -> Str
     )
 }
 
-fn clip_args(
-    image: &Path,
-    motion: Motion,
-    secs: f64,
-    resolution: Resolution,
-    output: &Path,
-) -> Vec<OsString> {
+fn clip_args(image: &Path, motion: Motion, secs: f64, output: &Path) -> Vec<OsString> {
     vec![
         "-y".into(),
         "-v".into(),
@@ -176,7 +164,7 @@ fn clip_args(
         "-r".into(),
         FPS.to_string().into(),
         "-vf".into(),
-        motion_filter(motion, frame_count(secs), resolution).into(),
+        motion_filter(motion, frame_count(secs)).into(),
         "-c:v".into(),
         "libx264".into(),
         "-preset".into(),
@@ -266,12 +254,10 @@ pub fn assemble_args(
     args
 }
 
-/// The biggest enlarged copy of a scene image that exists, else the original.
+/// The 4K copy of a scene image if it exists, else the original.
 pub fn best_image(original: &Path) -> PathBuf {
-    [Resolution::Uhd, Resolution::Hd]
-        .into_iter()
-        .map(|resolution| upscale::upscaled_path(original, resolution))
-        .find(|path| path.is_file())
+    Some(upscale::upscaled_path(original))
+        .filter(|path| path.is_file())
         .unwrap_or_else(|| original.to_path_buf())
 }
 
@@ -284,15 +270,8 @@ pub struct SceneSource {
     pub narration: Option<String>,
 }
 
-/// A finished video next to the scene media.
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct VideoFile {
-    pub label: &'static str,
-    pub file_path: String,
-}
-
-pub fn video_path(media_dir: &Path, resolution: Resolution) -> PathBuf {
-    media_dir.join(format!("video-{}.mp4", resolution.label()))
+pub fn video_path(media_dir: &Path) -> PathBuf {
+    media_dir.join(format!("video-{}.mp4", upscale::LABEL))
 }
 
 pub fn subtitles_path(video: &Path) -> PathBuf {
@@ -331,37 +310,26 @@ fn write_subtitles(
     written.map_err(|e| AppError::new(format!("cannot save {}: {e}", path.display())))
 }
 
-pub fn existing_videos(media_dir: &Path) -> Vec<VideoFile> {
-    Resolution::ALL
-        .into_iter()
-        .filter_map(|resolution| {
-            let path = video_path(media_dir, resolution);
-            path.is_file().then(|| VideoFile {
-                label: resolution.label(),
-                file_path: path.display().to_string(),
-            })
-        })
-        .collect()
+/// The finished video of a story, if it has been exported.
+pub fn existing_video(media_dir: &Path) -> Option<String> {
+    let path = video_path(media_dir);
+    path.is_file().then(|| path.display().to_string())
 }
 
-fn clip_cache_path(
-    dir: &Path,
-    scene: &SceneSource,
-    motion: Motion,
-    secs: f64,
-    resolution: Resolution,
-) -> PathBuf {
-    let stamp = std::fs::metadata(&scene.image)
+fn clip_cache_path(dir: &Path, scene: &SceneSource, motion: Motion, secs: f64) -> PathBuf {
+    // The picture actually rendered: a clip made before the 4K copy existed must not be reused.
+    let image = best_image(&scene.image);
+    let stamp = std::fs::metadata(&image)
         .ok()
         .map(|meta| (meta.len(), meta.modified().ok()))
         .unwrap_or_default();
     let mut hasher = DefaultHasher::new();
     (
-        &scene.image,
+        &image,
         stamp,
         motion,
         frame_count(secs),
-        resolution.label(),
+        upscale::LABEL,
         CLIP_PRESET,
         CLIP_CRF,
     )
@@ -501,7 +469,6 @@ fn render_atomically(
 /// second; finished clips stay cached, so the next export resumes from them.
 pub fn export(
     scenes: &[SceneSource],
-    resolution: Resolution,
     media_dir: &Path,
     cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(Progress),
@@ -529,7 +496,6 @@ pub fn export(
                 scene,
                 motion_for(scene.position),
                 plan.clip_secs[index],
-                resolution,
             )
         })
         .collect();
@@ -561,7 +527,7 @@ pub fn export(
         report("clip", index + 1, done);
         render_atomically(
             &ffmpeg,
-            |out| clip_args(&image, motion, secs, resolution, out),
+            |out| clip_args(&image, motion, secs, out),
             &clips[index],
             cancel,
             |frame| report("clip", index + 1, done + frame as f64),
@@ -569,7 +535,7 @@ pub fn export(
         done += clip_frames(index);
     }
     let audios: Vec<PathBuf> = scenes.iter().map(|scene| scene.audio.clone()).collect();
-    let target = video_path(media_dir, resolution);
+    let target = video_path(media_dir);
     report("join", scene_count, done);
     // Under a second per scene, so the cancel flag is only checked between scenes.
     let measured: Vec<Option<Measurement>> = audios
@@ -637,24 +603,24 @@ mod tests {
 
     #[test]
     fn motion_filter_uses_fractional_perspective_and_the_exact_output_size() {
-        let filter = motion_filter(Motion::ZoomIn, 300, Resolution::Hd);
+        let filter = motion_filter(Motion::ZoomIn, 300);
         assert!(filter.starts_with(
-            "scale=2560:1440:flags=lanczos,loop=loop=-1:size=1:start=0,fps=30,perspective="
+            "scale=3840:2160:flags=lanczos,loop=loop=-1:size=1:start=0,fps=30,perspective="
         ));
         assert!(filter.contains("on/299"));
         assert!(filter.contains("eval=frame"));
-        assert!(filter.ends_with("scale=1920:1080:flags=lanczos,format=yuv420p"));
+        assert!(filter.ends_with("scale=3840:2160:flags=lanczos,format=yuv420p"));
         assert!(
-            motion_filter(Motion::PanLeft, 90, Resolution::Uhd)
+            motion_filter(Motion::PanLeft, 90)
                 .ends_with("scale=3840:2160:flags=lanczos,format=yuv420p")
         );
     }
 
     #[test]
     fn zoom_out_runs_the_zoom_backwards_and_pans_move_sideways() {
-        assert!(motion_filter(Motion::ZoomOut, 100, Resolution::Hd).contains("(1+0.15*(1-"));
-        let right = motion_filter(Motion::PanRight, 100, Resolution::Hd);
-        let left = motion_filter(Motion::PanLeft, 100, Resolution::Hd);
+        assert!(motion_filter(Motion::ZoomOut, 100).contains("(1+0.15*(1-"));
+        let right = motion_filter(Motion::PanRight, 100);
+        let left = motion_filter(Motion::PanLeft, 100);
         assert!(right.contains("1.12"));
         assert_ne!(right, left);
     }
@@ -665,7 +631,6 @@ mod tests {
             Path::new("a.png"),
             Motion::ZoomIn,
             12.0,
-            Resolution::Hd,
             Path::new("c.mp4"),
         ));
         assert_eq!(&args[3..7], ["-i", "a.png", "-t", "12.000"]);
@@ -731,31 +696,21 @@ mod tests {
     }
 
     #[test]
-    fn best_image_prefers_the_biggest_enlarged_copy_and_falls_back_to_the_original() {
+    fn best_image_prefers_the_enlarged_copy_and_falls_back_to_the_original() {
         let dir = temp_dir("best");
         let original = dir.join("scene-0-image-v1.webp");
         assert_eq!(best_image(&original), original);
-        std::fs::write(upscale::upscaled_path(&original, Resolution::Hd), b"x").unwrap();
-        assert_eq!(
-            best_image(&original),
-            upscale::upscaled_path(&original, Resolution::Hd)
-        );
-        std::fs::write(upscale::upscaled_path(&original, Resolution::Uhd), b"x").unwrap();
-        assert_eq!(
-            best_image(&original),
-            upscale::upscaled_path(&original, Resolution::Uhd)
-        );
+        std::fs::write(upscale::upscaled_path(&original), b"x").unwrap();
+        assert_eq!(best_image(&original), upscale::upscaled_path(&original));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn existing_videos_lists_only_finished_files() {
+    fn existing_video_is_found_only_once_finished() {
         let dir = temp_dir("videos");
-        assert!(existing_videos(&dir).is_empty());
-        std::fs::write(video_path(&dir, Resolution::Hd), b"x").unwrap();
-        let videos = existing_videos(&dir);
-        assert_eq!(videos.len(), 1);
-        assert_eq!(videos[0].label, "1080p");
+        assert_eq!(existing_video(&dir), None);
+        std::fs::write(video_path(&dir), b"x").unwrap();
+        assert!(existing_video(&dir).unwrap().ends_with("video-4k.mp4"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -770,18 +725,28 @@ mod tests {
             audio: dir.join("a.mp3"),
             narration: None,
         };
-        let base = clip_cache_path(&dir, &scene, Motion::ZoomOut, 12.0, Resolution::Hd);
-        assert_eq!(
-            base,
-            clip_cache_path(&dir, &scene, Motion::ZoomOut, 12.0, Resolution::Hd)
-        );
+        let base = clip_cache_path(&dir, &scene, Motion::ZoomOut, 12.0);
+        assert_eq!(base, clip_cache_path(&dir, &scene, Motion::ZoomOut, 12.0));
+        assert_ne!(base, clip_cache_path(&dir, &scene, Motion::ZoomOut, 13.0));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn clip_cache_name_follows_the_picture_the_clip_is_rendered_from() {
+        let dir = temp_dir("cache-source");
+        let image = dir.join("scene.png");
+        std::fs::write(&image, b"abc").unwrap();
+        let scene = SceneSource {
+            position: 0,
+            image: image.clone(),
+            audio: dir.join("a.mp3"),
+            narration: None,
+        };
+        let from_original = clip_cache_path(&dir, &scene, Motion::ZoomIn, 12.0);
+        std::fs::write(upscale::upscaled_path(&image), b"bigger").unwrap();
         assert_ne!(
-            base,
-            clip_cache_path(&dir, &scene, Motion::ZoomOut, 13.0, Resolution::Hd)
-        );
-        assert_ne!(
-            base,
-            clip_cache_path(&dir, &scene, Motion::ZoomOut, 12.0, Resolution::Uhd)
+            from_original,
+            clip_cache_path(&dir, &scene, Motion::ZoomIn, 12.0)
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -807,7 +772,7 @@ mod tests {
     #[test]
     fn subtitles_follow_the_voice_starts_and_are_removed_when_a_voiced_text_is_unknown() {
         let dir = temp_dir("srt");
-        let video = video_path(&dir, Resolution::Uhd);
+        let video = video_path(&dir);
         let scene = |position: i64, narration: Option<&str>| SceneSource {
             position,
             image: dir.join("i.png"),
@@ -831,14 +796,7 @@ mod tests {
 
     #[test]
     fn export_rejects_an_empty_story() {
-        let err = export(
-            &[],
-            Resolution::Hd,
-            Path::new("/tmp"),
-            &AtomicBool::new(false),
-            &mut |_| {},
-        )
-        .unwrap_err();
+        let err = export(&[], Path::new("/tmp"), &AtomicBool::new(false), &mut |_| {}).unwrap_err();
         assert!(err.to_string().contains("no scenes"));
     }
 
@@ -955,7 +913,7 @@ mod tests {
     /// Needs ffmpeg and ffprobe: `cargo test -- --ignored`.
     #[test]
     #[ignore]
-    fn export_joins_two_scenes_into_a_1080p_video_with_audio() {
+    fn export_joins_two_scenes_into_a_4k_video_with_audio() {
         let ffmpeg = find_tool("ffmpeg").unwrap();
         let ffprobe = find_tool("ffprobe").unwrap();
         let dir = temp_dir("real");
@@ -991,13 +949,9 @@ mod tests {
             });
         }
         let mut reports: Vec<Progress> = Vec::new();
-        let video = export(
-            &scenes,
-            Resolution::Hd,
-            &dir,
-            &AtomicBool::new(false),
-            &mut |progress| reports.push(progress),
-        )
+        let video = export(&scenes, &dir, &AtomicBool::new(false), &mut |progress| {
+            reports.push(progress)
+        })
         .unwrap();
         assert!(reports.len() > 3, "{reports:?}");
         assert!(
@@ -1024,7 +978,7 @@ mod tests {
         let mut args = probe;
         args.push((&video).into());
         let info = run_tool(&ffprobe, &args, "ffprobe").unwrap();
-        assert!(info.contains("video,1920,1080"), "{info}");
+        assert!(info.contains("video,3840,2160"), "{info}");
         assert!(info.contains("audio"), "{info}");
         // Both narrations, 12 dB apart at the source, sit at the target in the stereo track.
         for (start, seconds) in [("0.5", "2"), ("3.5", "3")] {
@@ -1035,7 +989,7 @@ mod tests {
         // slots 3 s + 4 s plus the 1 s overlap of the last clip = 8 s
         let duration: f64 = info.lines().last().unwrap().trim().parse().unwrap();
         assert!((duration - 8.0).abs() < 0.5, "{duration}");
-        assert!(video_path(&dir, Resolution::Hd).is_file());
+        assert!(video_path(&dir).is_file());
         let srt = std::fs::read_to_string(subtitles_path(&video)).unwrap();
         assert!(
             srt.contains("Scene 0.") && srt.contains("Scene 1."),

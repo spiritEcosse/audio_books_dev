@@ -2,7 +2,6 @@ import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
-  type Resolution,
   type YoutubeChannels,
   type YoutubeForm,
   type YoutubeInfo,
@@ -36,7 +35,6 @@ export function YoutubePanel({ storyId, videosKey, channelsKey, onOpenSettings }
   const [info, setInfo] = useState<YoutubeInfo | null>(null);
   const [list, setList] = useState<YoutubeChannels | null>(null);
   const [form, setForm] = useState<YoutubeForm | null>(null);
-  const [chosen, setChosen] = useState<Resolution | null>(null);
   const [work, setWork] = useState<Work | null>(null);
   const [percent, setPercent] = useState(0);
   /** The channel a second upload was confirmed for. */
@@ -113,8 +111,7 @@ export function YoutubePanel({ storyId, videosKey, channelsKey, onOpenSettings }
     edited.current = true;
     setForm((current) => current && { ...current, ...changes });
   };
-  const resolutions = info.videos.map((video) => video.label);
-  const resolution = chosen && resolutions.includes(chosen) ? chosen : resolutions[resolutions.length - 1];
+  const hasVideo = info.video !== null;
   const uploading = work === "upload" || info.uploading;
   const channel = selectedChannel(list.channels, form.channel_id);
   const previous = info.uploads.find((upload) => upload.channel_id === channel?.id);
@@ -122,7 +119,7 @@ export function YoutubePanel({ storyId, videosKey, channelsKey, onOpenSettings }
   const reasons = blockers(form, {
     channel,
     hasChannels: list.channels.length > 0,
-    hasVideo: resolution !== undefined,
+    hasVideo,
     alreadyUploaded: previous?.already_uploaded ?? false,
     confirmedAgain: again,
     now,
@@ -132,11 +129,11 @@ export function YoutubePanel({ storyId, videosKey, channelsKey, onOpenSettings }
     perform("draft", async () => change(await api.draftYoutube(storyId)));
   const upload = () =>
     perform("upload", async () => {
-      if (!resolution || !channel) return;
+      if (!hasVideo || !channel) return;
       setPercent(0);
       const chosenForm = { ...form, channel_id: channel.id };
       change(chosenForm);
-      await api.uploadYoutube(storyId, resolution, chosenForm, again);
+      await api.uploadYoutube(storyId, chosenForm, again);
       setAgainFor(null);
     });
 
@@ -181,18 +178,6 @@ export function YoutubePanel({ storyId, videosKey, channelsKey, onOpenSettings }
         </div>
       )}
       <YoutubeFields form={form} disabled={uploading || work === "draft"} onChange={change} />
-      {resolutions.length > 1 && (
-        <label>
-          Какое видео загрузить
-          <select value={resolution} disabled={uploading} onChange={(e) => setChosen(e.target.value as Resolution)}>
-            {resolutions.map((label) => (
-              <option key={label} value={label}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
       {channel && previous?.already_uploaded && !uploading && (
         <label className="youtube-check">
           <input
@@ -214,7 +199,7 @@ export function YoutubePanel({ storyId, videosKey, channelsKey, onOpenSettings }
       ) : (
         <div className="media-actions">
           <button type="button" disabled={work !== null || reasons.length > 0} onClick={() => void upload()}>
-            Загрузить{resolution ? ` ${resolution}` : ""}
+            Загрузить{hasVideo ? " 4K" : ""}
             {channel ? ` на канал «${channel.title}»` : " на YouTube"}
           </button>
           {reasons.length > 0 && <span className="muted small">Чтобы загрузить: {reasons.join("; ")}.</span>}

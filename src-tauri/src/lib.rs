@@ -269,8 +269,8 @@ struct MediaInfo {
     /// Recurring characters of the story and the scenes each one is switched off for.
     characters: Vec<characters::Character>,
     character_off: Vec<characters::SceneCharacterOff>,
-    /// Finished videos (1080p / 4K) in the story's media folder.
-    videos: Vec<video::VideoFile>,
+    /// The exported video in the story's media folder, once there is one.
+    video: Option<String>,
 }
 
 fn load_media(state: &AppState, conn: &Connection, story_id: i64) -> Result<MediaInfo, AppError> {
@@ -290,7 +290,7 @@ fn load_media(state: &AppState, conn: &Connection, story_id: i64) -> Result<Medi
         references: media::list_references(conn, story_id)?,
         characters: characters::list(conn, story_id)?,
         character_off: characters::list_off(conn, story_id)?,
-        videos: video::existing_videos(&media::story_media_dir(&state.workspace, story_id)),
+        video: video::existing_video(&media::story_media_dir(&state.workspace, story_id)),
     })
 }
 
@@ -647,7 +647,6 @@ fn images_to_upscale(
     workspace: &std::path::Path,
     story_id: i64,
     position: Option<i64>,
-    resolution: upscale::Resolution,
 ) -> Result<Vec<(i64, PathBuf)>, AppError> {
     let media_dir = media::story_media_dir(workspace, story_id);
     Ok(media::list_assets(conn, story_id)?
@@ -655,23 +654,17 @@ fn images_to_upscale(
         .filter(|a| a.kind == media::KIND_IMAGE && a.status == media::STATUS_READY)
         .filter(|a| position.is_none_or(|p| p == a.position))
         .filter_map(|a| a.file_path.map(|path| (a.position, PathBuf::from(path))))
-        .filter(|(_, path)| {
-            path.starts_with(&media_dir) && !upscale::upscaled_path(path, resolution).is_file()
-        })
+        .filter(|(_, path)| path.starts_with(&media_dir) && !upscale::upscaled_path(path).is_file())
         .collect())
 }
 
 /// Enlarges every target, carrying on past a failed one; reports all failures together. Blocking.
-fn upscale_all(
-    roots: &[PathBuf],
-    targets: &[(i64, PathBuf)],
-    resolution: upscale::Resolution,
-) -> Result<(), AppError> {
+fn upscale_all(roots: &[PathBuf], targets: &[(i64, PathBuf)]) -> Result<(), AppError> {
     let tools = upscale::find_tools(roots)?;
     let failures: Vec<String> = targets
         .iter()
         .filter_map(|(position, path)| {
-            upscale::upscale(path, resolution, &tools)
+            upscale::upscale(path, &tools)
                 .err()
                 .map(|e| format!("scene {position}: {e}"))
         })
@@ -683,23 +676,21 @@ fn upscale_all(
     }
 }
 
-/// Upscayl + ffmpeg: writes `<image>-1080p.png` / `-4k.png` next to the finished image(s). Free, local, ~25 s per image.
+/// Upscayl + ffmpeg: writes `<image>-4k.png` next to the finished image(s). Free, local, ~25 s per image.
 #[tauri::command]
 async fn upscale_images(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     story_id: i64,
-    resolution: String,
     position: Option<i64>,
 ) -> Result<MediaInfo, AppError> {
-    let resolution = upscale::Resolution::parse(&resolution)?;
     let targets = {
         let conn = state.conn()?;
-        images_to_upscale(&conn, &state.workspace, story_id, position, resolution)?
+        images_to_upscale(&conn, &state.workspace, story_id, position)?
     };
     if !targets.is_empty() {
         let roots = upscale_roots(&app);
-        tauri::async_runtime::spawn_blocking(move || upscale_all(&roots, &targets, resolution))
+        tauri::async_runtime::spawn_blocking(move || upscale_all(&roots, &targets))
             .await
             .map_err(|e| AppError::new(format!("upscaling stopped: {e}")))??;
     }
@@ -753,16 +744,14 @@ struct ExportProgressEvent {
     progress: video::Progress,
 }
 
-/// Joins every scene (zoom/pan clip + narration, 1 s fades) into `video-1080p.mp4` / `video-4k.mp4`. Long: minutes to
+/// Joins every scene (zoom/pan clip + narration, 1 s fades) into `video-4k.mp4`. Long: minutes to
 /// tens of minutes; clips of unchanged scenes are reused.
 #[tauri::command]
 async fn export_video(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     story_id: i64,
-    resolution: String,
 ) -> Result<MediaInfo, AppError> {
-    let resolution = upscale::Resolution::parse(&resolution)?;
     let sources = {
         let conn = state.conn()?;
         export_sources(&conn, story_id)?
@@ -777,7 +766,7 @@ async fn export_video(
                 ExportProgressEvent { story_id, progress },
             );
         };
-        video::export(&sources, resolution, &media_dir, &cancel, &mut report)
+        video::export(&sources, &media_dir, &cancel, &mut report)
     })
     .await
     .map_err(|e| AppError::new(format!("export stopped: {e}")))?;
