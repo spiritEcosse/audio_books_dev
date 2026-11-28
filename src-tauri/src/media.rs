@@ -488,7 +488,7 @@ pub fn request_missing(conn: &Connection, story_id: i64) -> Result<usize, AppErr
 pub fn voiced_texts(conn: &Connection, story_id: i64) -> Result<HashMap<i64, String>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT position, source FROM scene_assets
-         WHERE story_id = ?1 AND kind = ?2 AND status = ?3 AND source <> ''",
+         WHERE story_id = ?1 AND kind = ?2 AND status = ?3 AND source <> '' AND position >= 0",
     )?;
     let rows = stmt.query_map(params![story_id, KIND_AUDIO, STATUS_READY], |row| {
         Ok((row.get(0)?, row.get(1)?))
@@ -504,7 +504,7 @@ pub fn list_assets(conn: &Connection, story_id: i64) -> Result<Vec<SceneAsset>, 
                 a.status = 'requested' AND a.started_at IS NOT NULL AND a.session_id IS NOT NULL
          FROM scene_assets a
          LEFT JOIN scenes s ON s.story_id = a.story_id AND s.position = a.position
-         WHERE a.story_id = ?1 ORDER BY a.position, a.kind",
+         WHERE a.story_id = ?1 AND a.position >= 0 ORDER BY a.position, a.kind",
     )?;
     let rows = stmt.query_map([story_id], |row| {
         let kind: String = row.get(1)?;
@@ -570,7 +570,7 @@ pub fn clear_reference(
 
 pub fn list_references(conn: &Connection, story_id: i64) -> Result<Vec<SceneReference>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT position, file_path FROM scene_references WHERE story_id = ?1 ORDER BY position",
+        "SELECT position, file_path FROM scene_references WHERE story_id = ?1 AND position >= 0 ORDER BY position",
     )?;
     let rows = stmt.query_map([story_id], |row| {
         Ok(SceneReference {
@@ -610,7 +610,8 @@ pub fn save_reference_file(
     let dir = story_media_dir(workspace, story_id).join("refs");
     std::fs::create_dir_all(&dir)
         .map_err(|e| AppError::new(format!("cannot create {}: {e}", dir.display())))?;
-    let path = dir.join(format!("scene-{position}.{extension}"));
+    // A reference follows its scene when scenes move, so the name never reuses an existing file.
+    let path = crate::media_queue::next_versioned_path(&dir, position, "reference", &extension);
     std::fs::write(&path, bytes)
         .map_err(|e| AppError::new(format!("cannot write {}: {e}", path.display())))?;
     Ok(path)
@@ -737,7 +738,7 @@ mod tests {
     }
 
     #[test]
-    fn asset_of_a_removed_scene_is_stale() {
+    fn asset_of_a_removed_scene_is_not_listed() {
         let (mut conn, story) = setup();
         request_asset(&conn, story, 1, KIND_IMAGE).unwrap();
         let only_first = [NewScene {
@@ -745,7 +746,7 @@ mod tests {
             image_prompt: "fox".into(),
         }];
         db::replace_scenes(&mut conn, story, &only_first).unwrap();
-        assert!(list_assets(&conn, story).unwrap()[0].stale);
+        assert!(list_assets(&conn, story).unwrap().is_empty());
     }
 
     #[test]

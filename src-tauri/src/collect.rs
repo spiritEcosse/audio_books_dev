@@ -265,6 +265,7 @@ pub fn pending_items(
     let mut stmt = conn.prepare(
         "SELECT position, source, estimate_credits, session_id, flow_id FROM scene_assets
          WHERE story_id = ?1 AND kind = ?2 AND status = ?3 AND started_at IS NOT NULL AND session_id IS NOT NULL
+           AND position >= 0
          ORDER BY position",
     )?;
     let rows = stmt.query_map(params![story_id, kind, STATUS_REQUESTED], |row| {

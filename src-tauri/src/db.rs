@@ -2,6 +2,7 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
+use crate::scene_moves;
 
 const SCHEMA: &str = "
 PRAGMA foreign_keys = ON;
@@ -65,7 +66,8 @@ CREATE TABLE IF NOT EXISTS story_media (
     image_model TEXT,
     voice_id    TEXT
 );
--- Keyed by scene position, not scene id: replace_scenes recreates every scene row.
+-- Keyed by scene position, not scene id: replace_scenes recreates every scene row and moves these along
+-- with their scenes (scene_moves.rs). Positions below zero belong to removed scenes.
 -- 'source' is the scene text / image prompt the asset was requested for (staleness check).
 CREATE TABLE IF NOT EXISTS scene_assets (
     story_id   INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
@@ -107,6 +109,13 @@ CREATE TABLE IF NOT EXISTS scene_references (
     story_id  INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
     position  INTEGER NOT NULL,
     file_path TEXT NOT NULL,
+    PRIMARY KEY (story_id, position)
+);
+CREATE TABLE IF NOT EXISTS parked_scenes (
+    story_id     INTEGER NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    position     INTEGER NOT NULL,
+    text         TEXT NOT NULL,
+    image_prompt TEXT NOT NULL,
     PRIMARY KEY (story_id, position)
 );
 CREATE TABLE IF NOT EXISTS story_characters (
@@ -284,13 +293,14 @@ pub fn list_scenes(conn: &Connection, story_id: i64) -> Result<Vec<Scene>, AppEr
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
-/// Atomically replaces all scenes of a story.
+/// Atomically replaces all scenes of a story; each scene's media moves with it.
 pub fn replace_scenes(
     conn: &mut Connection,
     story_id: i64,
     scenes: &[NewScene],
 ) -> Result<(), AppError> {
     let tx = conn.transaction()?;
+    scene_moves::follow(&tx, story_id, scenes)?;
     tx.execute("DELETE FROM scenes WHERE story_id = ?1", [story_id])?;
     for (index, scene) in scenes.iter().enumerate() {
         tx.execute(

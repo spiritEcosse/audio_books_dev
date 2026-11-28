@@ -46,7 +46,7 @@ pub fn list(conn: &Connection, story_id: i64) -> Result<Vec<Character>, AppError
 
 pub fn list_off(conn: &Connection, story_id: i64) -> Result<Vec<SceneCharacterOff>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT position, character_id FROM scene_character_off WHERE story_id = ?1 ORDER BY position, character_id",
+        "SELECT position, character_id FROM scene_character_off WHERE story_id = ?1 AND position >= 0 ORDER BY position, character_id",
     )?;
     let rows = stmt.query_map([story_id], |row| {
         Ok(SceneCharacterOff {
