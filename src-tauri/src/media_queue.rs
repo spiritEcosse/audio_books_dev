@@ -1,10 +1,11 @@
 //! Pieces shared by the narration and image queues: reading Claude's JSON answers, trusted downloads and
 //! uploads, versioned file names and the `scene_assets` bookkeeping.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
 use crate::error::AppError;
@@ -58,7 +59,7 @@ pub fn queued_rows(
 ) -> Result<Vec<QueuedRow>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT position, source, model_id, voice_id, estimate_credits FROM scene_assets
-         WHERE story_id = ?1 AND kind = ?2 AND status = ?3 AND started_at IS NULL ORDER BY position",
+         WHERE story_id = ?1 AND kind = ?2 AND status = ?3 AND started_at IS NULL AND position >= 0 ORDER BY position",
     )?;
     let rows = stmt.query_map(params![story_id, kind, STATUS_REQUESTED], |row| {
         Ok(QueuedRow {
@@ -70,6 +71,45 @@ pub fn queued_rows(
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+/// The rows a long task works on. Its positions are those of the moment it began; the scenes may have moved since.
+pub struct Tracked(HashMap<i64, i64>);
+
+impl Tracked {
+    pub fn new(
+        conn: &Connection,
+        story_id: i64,
+        kind: &str,
+        positions: &[i64],
+    ) -> Result<Self, AppError> {
+        let mut rows = HashMap::new();
+        for position in positions {
+            let row: Option<i64> = conn
+                .query_row(
+                    "SELECT rowid FROM scene_assets WHERE story_id = ?1 AND position = ?2 AND kind = ?3",
+                    params![story_id, position, kind],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            rows.extend(row.map(|row| (*position, row)));
+        }
+        Ok(Self(rows))
+    }
+
+    /// Where the row of `position` is now; None when it is gone.
+    pub fn now(&self, conn: &Connection, position: i64) -> Result<Option<i64>, AppError> {
+        let Some(row) = self.0.get(&position) else {
+            return Ok(None);
+        };
+        Ok(conn
+            .query_row(
+                "SELECT position FROM scene_assets WHERE rowid = ?1",
+                [row],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
 }
 
 pub fn items_prompt(task: &str, items: Vec<Value>) -> String {

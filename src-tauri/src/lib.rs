@@ -11,6 +11,7 @@ mod loudness;
 mod media;
 mod media_queue;
 mod profiles;
+mod scene_moves;
 mod stats;
 mod subtitles;
 mod upscale;
@@ -384,13 +385,22 @@ async fn estimate_audio_queue(
             "no unpriced narration is waiting for this scene",
         ));
     }
+    let tracked = {
+        let positions: Vec<i64> = items.iter().map(|item| item.position).collect();
+        let conn = state.conn()?;
+        media_queue::Tracked::new(&conn, story_id, media::KIND_AUDIO, &positions)?
+    };
     let workspace = state.workspace.clone();
     let estimates =
         tauri::async_runtime::spawn_blocking(move || audio_queue::estimate(&workspace, &items))
             .await
             .map_err(|e| AppError::new(format!("estimate task failed: {e}")))??;
     let conn = state.conn()?;
-    media_queue::save_estimates(&conn, story_id, media::KIND_AUDIO, &estimates)?;
+    let mut current = Vec::new();
+    for (position, credits) in estimates {
+        current.extend(tracked.now(&conn, position)?.map(|now| (now, credits)));
+    }
+    media_queue::save_estimates(&conn, story_id, media::KIND_AUDIO, &current)?;
     load_media(&state, &conn, story_id)
 }
 
@@ -406,10 +416,11 @@ async fn launch_and_collect<F>(
 where
     F: FnOnce(&std::path::Path) -> Result<collect::StartReport, AppError> + Send + 'static,
 {
-    {
+    let tracked = {
         let conn = state.conn()?;
         media_queue::mark_started(&conn, story_id, kind, &positions)?;
-    }
+        media_queue::Tracked::new(&conn, story_id, kind, &positions)?
+    };
     let workspace = state.workspace.clone();
     let started = tauri::async_runtime::spawn_blocking(move || start(&workspace))
         .await
@@ -421,11 +432,14 @@ where
             Err(err) => {
                 let message =
                     format!("generation failed, credits may already have been spent: {err}");
-                media_queue::fail_started(&conn, story_id, kind, &positions, &message)?;
+                let mut current = Vec::new();
+                for position in &positions {
+                    current.extend(tracked.now(&conn, *position)?);
+                }
+                media_queue::fail_started(&conn, story_id, kind, &current, &message)?;
                 return Ok(());
             }
-            Ok(report) => {
-                collect::save_started(&conn, story_id, kind, &report.started)?;
+            Ok(mut report) => {
                 let mut failures: Vec<media_queue::ItemResult> = report
                     .failed
                     .iter()
@@ -444,6 +458,16 @@ where
                         });
                     }
                 }
+                // The scenes may have moved while Claude was starting the generations.
+                let mut started = Vec::new();
+                for mut item in std::mem::take(&mut report.started) {
+                    if let Some(now) = tracked.now(&conn, item.position)? {
+                        item.position = now;
+                        started.push(item);
+                    }
+                }
+                collect::save_started(&conn, story_id, kind, &started)?;
+                let failures = relocate(&conn, &tracked, failures)?;
                 media_queue::apply_results(&conn, story_id, kind, &failures)?;
             }
         }
@@ -457,9 +481,12 @@ async fn collect_story(
     story_id: i64,
     kind: &'static str,
 ) -> Result<(), AppError> {
-    let items = {
+    let (items, tracked) = {
         let conn = state.conn()?;
-        collect::pending_items(&conn, story_id, kind)?
+        let items = collect::pending_items(&conn, story_id, kind)?;
+        let positions: Vec<i64> = items.iter().map(|item| item.position).collect();
+        let tracked = media_queue::Tracked::new(&conn, story_id, kind, &positions)?;
+        (items, tracked)
     };
     if items.is_empty() {
         return Ok(());
@@ -472,7 +499,24 @@ async fn collect_story(
     .await
     .map_err(|e| AppError::new(format!("collecting task failed: {e}")))?;
     let conn = state.conn()?;
-    media_queue::apply_results(&conn, story_id, kind, &collection.finished)
+    let finished = relocate(&conn, &tracked, collection.finished)?;
+    media_queue::apply_results(&conn, story_id, kind, &finished)
+}
+
+/// Points results at where their scenes are now; those whose request is gone are dropped.
+fn relocate(
+    conn: &Connection,
+    tracked: &media_queue::Tracked,
+    results: Vec<media_queue::ItemResult>,
+) -> Result<Vec<media_queue::ItemResult>, AppError> {
+    let mut current = Vec::new();
+    for mut result in results {
+        if let Some(position) = tracked.now(conn, result.position)? {
+            result.position = position;
+            current.push(result);
+        }
+    }
+    Ok(current)
 }
 
 fn media_kind(kind: &str) -> Result<&'static str, AppError> {
@@ -563,13 +607,22 @@ async fn estimate_image_queue(
         }
         return Err(AppError::new("no unpriced image is waiting for this scene"));
     }
+    let tracked = {
+        let positions: Vec<i64> = items.iter().map(|item| item.position).collect();
+        let conn = state.conn()?;
+        media_queue::Tracked::new(&conn, story_id, media::KIND_IMAGE, &positions)?
+    };
     let workspace = state.workspace.clone();
     let estimates =
         tauri::async_runtime::spawn_blocking(move || image_queue::estimate(&workspace, &items))
             .await
             .map_err(|e| AppError::new(format!("estimate task failed: {e}")))??;
     let conn = state.conn()?;
-    media_queue::save_estimates(&conn, story_id, media::KIND_IMAGE, &estimates)?;
+    let mut current = Vec::new();
+    for (position, credits) in estimates {
+        current.extend(tracked.now(&conn, position)?.map(|now| (now, credits)));
+    }
+    media_queue::save_estimates(&conn, story_id, media::KIND_IMAGE, &current)?;
     load_media(&state, &conn, story_id)
 }
 
